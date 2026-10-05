@@ -68,11 +68,14 @@ takes the backups and, in its drill role, on a dedicated host that is not
 a DC.
 
 conductor talks to the other components through narrow typed protocols: a
-Unix socket to conductor-helper, a Unix socket to conductor-sync's
-management API (both check the peer's UID with `SO_PEERCRED`), and
-mutually pinned TLS to each conductor-files agent. The protocol packages
-(`ad/helper`, `syncapi`, `filesapi`) are public Go packages of the
-component that serves them.
+Unix socket to conductor-helper, Unix sockets to the management APIs of
+conductor-sync and conductor-idp (all check the peer's UID with
+`SO_PEERCRED`), and mutually pinned TLS to each conductor-files agent.
+In the other direction, conductor serves its second factor to
+conductor-idp on a Unix socket only conductor-idp's user may use. The
+protocol packages (`ad/helper`, `syncapi`, `idpapi`, `filesapi`) are
+public Go packages of the component that serves them (`idpapi` also holds
+the second-factor protocol conductor serves).
 
 ## How AD is accessed
 
@@ -207,9 +210,29 @@ component that serves them.
   for third-party clients and optional mandatory second factor per
   client. `sub` is the user's objectGUID; the `groups` claim carries group
   names or SIDs, nested membership included.
-- Users authenticate against AD with the same Kerberos path as conductor;
-  the same second-factor policy applies. Same web hardening, with no
-  JavaScript at all.
+- Users authenticate against AD with the same Kerberos path as conductor.
+  On the same host, conductor-idp uses conductor's second factor through a
+  local socket: one enrollment (authenticator app, recovery codes,
+  security keys) and conductor's role-based policy for both; a security
+  key registered in conductor works at the IdP when the IdP's origin is
+  one of conductor's WebAuthn origins (a shared parent domain as RP ID, or
+  WebAuthn related origins). Elsewhere it keeps its own TOTP enrollments.
+  Same web hardening; the only script is the WebAuthn one, on the
+  second-factor page, under a per-response CSP nonce.
+- SAML single logout: a LogoutRequest signed with the HTTP-Redirect
+  binding's query signature by the SP's registered certificate ends the
+  session at once (anything else asks the user first, since the IdP
+  verifies no XML signature); every other SP of the session then receives
+  a signed LogoutRequest in turn. A logout started at the IdP or by an
+  OpenID Connect client logs the SAML participants out too.
+- Managed from conductor's "Single sign-on" section through a local
+  management API (Unix socket, `SO_PEERCRED`, typed operations): clients
+  and SPs with guided presets (Google Workspace, Grafana, Nextcloud,
+  GitLab, generic), metadata import, a claims and assertion preview for a
+  real user, signing keys and staged rotation, session lifetimes and the
+  consent note, and sign-in activity per application. Every change is
+  confirmed in conductor with a fresh second factor and audited on both
+  sides; a client secret is shown once and stored only as a hash.
 
 ### conductor-sync
 

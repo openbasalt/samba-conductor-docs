@@ -99,7 +99,13 @@ certificate.
 
 conductor-idp has its own suite, with an independent OpenID Connect
 client, a real application signing in through it and a SAML service
-provider, also on desktop and mobile.
+provider, also on desktop and mobile. conductor's suite also runs
+conductor-idp next to conductor: applications registered from the Single
+sign-on section, a passkey registered in conductor used at the IdP, and
+SAML single logout started by a service provider. The OpenID Foundation
+conformance suite (basic and config plans) is run locally against a test
+deployment; its results and conductor-idp's deliberate deviations are in
+conductor-idp's decisions (D13).
 
 The lab has found real defects that unit tests could not: Samba requiring
 TLS channel bindings for GSSAPI over LDAPS, Samba's KDC reporting an
