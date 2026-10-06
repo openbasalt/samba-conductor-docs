@@ -77,7 +77,8 @@ In the component repositories:
 
 Pre-release: no tagged release yet. Packages for Fedora and Basalt OS are
 published in the basalt-tools repository at
-<https://obpkg.org/basalt-tools>; Debian and Ubuntu packages (APT) follow.
+<https://obpkg.org/basalt-tools>, and Debian and Ubuntu packages in the APT
+repository at <https://obpkg.org/apt> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
 
 ## Contributing and security
 
