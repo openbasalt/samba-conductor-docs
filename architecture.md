@@ -160,11 +160,16 @@ the second-factor protocol conductor serves).
   factor and password pages. The per-account limit sits below the domain
   lockout threshold, so conductor stops before AD locks the account.
   conductor warns when the domain has no lockout policy.
-- Audit log: append-only (database triggers refuse updates and deletes),
-  each entry carries the SHA-256 of the previous one, with actor, target,
-  change and source address; `audit verify` checks the chain, entries
-  export as JSON lines. conductor-idp, conductor-sync and conductor-files
-  keep hash-chained audit logs of their own.
+- Audit log: an append-only SQLite table (database triggers refuse
+  updates and deletes) with actor, target, change and source address;
+  each entry carries the SHA-256 of the previous one, `audit verify` checks
+  the chain, and entries export as JSON lines. The chain detects accidental
+  or partial edits. It is not keyed and not anchored outside the database,
+  so it does not protect against someone with write access to the database
+  file, who can rewrite entries and recompute the chain. Protect the
+  database file and ship the exported log off the host if you need tamper
+  evidence. conductor-idp, conductor-sync and conductor-files keep
+  hash-chained audit logs of their own, with the same limits.
 - State: SQLite (WAL) in `/var/lib/<component>`, holding sessions,
   settings, second-factor secrets, the audit log and job history. TOTP
   secrets are sealed with AES-256-GCM (bound to the user's SID) under a
