@@ -6,8 +6,9 @@ computers, DNS, Group Policy links, password policies and lockouts from a
 browser; every user of the domain gets a self-service portal for their
 profile, password and second factors. Every directory operation runs with
 the signed-in user's own identity, so the domain's own access rules apply,
-and every change is previewed before it is applied and recorded in a
-hash-chained audit log.
+and every change is previewed before it is applied and recorded in an
+append-only audit log (see [architecture](architecture.md) for what its
+hash chain does and does not protect against).
 
 Optional components, each deployed on its own, extend it:
 
@@ -17,7 +18,8 @@ Optional components, each deployed on its own, extend it:
 - an agent that manages file shares on domain-member file servers.
 
 The components run as native systemd services on Debian, Ubuntu, Fedora and
-Basalt OS, each under its own user and sandbox.
+Basalt OS, each under its own user and sandbox, or as hardened container
+images ([containers](containers.md)).
 
 This repository holds the documentation that spans the components. Each
 component repository documents its own installation, configuration and
@@ -45,6 +47,9 @@ In this repository:
 - [Packaging](packaging.md): how the .deb and .rpm packages and the
   SELinux policy packages are built, what they contain, versions,
   reproducible builds, SBOMs and licenses.
+- [Container images](containers.md): the images on Docker Hub and GHCR,
+  compose files, networking, persistence, time, permissions, secrets,
+  backups, upgrades, Podman and SELinux, and how to verify an image.
 - [Verifying releases](verifying-releases.md): the release key, what it
   signs and how to check a download or a repository.
 - [Testing](testing.md): unit tests and gates, the integration lab, the
@@ -75,10 +80,15 @@ In the component repositories:
 
 ## Status
 
-Pre-release: no tagged release yet. Packages for Fedora and Basalt OS are
-published in the basalt-tools repository at
-<https://obpkg.org/basalt-tools>, and Debian and Ubuntu packages in the APT
-repository at <https://obpkg.org/apt> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
+Version 0.1.0 is released for conductor, conductor-idp, conductor-sync and
+conductor-backup: signed GitHub releases (tag `v0.1.0`), Debian and Ubuntu
+packages `0.1.0-1` in the APT repository at <https://obpkg.org/apt>, and
+container images tagged `0.1.0` and `latest` on Docker Hub
+(`docker.io/openbasalt`) and GHCR (`ghcr.io/openbasalt`), with the same
+digests in both ([container images](containers.md)). Packages for Fedora
+and Basalt OS are published in the basalt-tools repository at
+<https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
+conductor-files and the ad library have no tagged release yet.
 
 ## Contributing and security
 
