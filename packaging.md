@@ -337,3 +337,11 @@ release candidates), component `main`, architectures amd64 and arm64: the
 packages are identical across distributions, so per-codename suites would
 only multiply metadata. The RPMs are published in Basalt OS's
 `basalt-tools` repository.
+
+## Container images
+
+The container images are built from these packages, not from a separate
+compile: the image build downloads the released .deb files from the APT
+repository, verifies them through its signed `InRelease` and extracts the
+binaries, so an image and a package of the same version contain the same
+binaries. How to run and verify them: [container images](containers.md).

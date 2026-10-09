@@ -26,6 +26,8 @@ are also published in each component repository's SECURITY.md.
 | RPMs of the `basalt-tools` repository | OpenPGP signature in each package (`rpmsign`) | packages subkey |
 | Repository metadata of `basalt-tools` (`repomd.xml.asc`) | OpenPGP | packages subkey |
 | Git tags | OpenPGP or SSH signature | the key of the person who tags |
+| `SHA256SUMS` of a containers release (covers `IMAGES.txt`, the image SBOMs and scan reports) | detached OpenPGP signature, `SHA256SUMS.asc` | packages subkey |
+| Container images (each published digest) | Sigstore keyless signature (cosign), SBOM and provenance attestations | the identity of the release workflow, no long-lived key ([container images](containers.md#images-tags-and-verification)) |
 
 Packages are not signed by the build itself: signing is a release-time
 step. Individual .deb files are not signed; apt verifies them through the
@@ -112,11 +114,25 @@ targeted policy is installed.
 
 ## The APT repository (Debian, Ubuntu)
 
-The APT repository is signed with the same packages subkey (`InRelease`,
-`Release.gpg`), and apt checks it against the key named in the source's
-`Signed-By=`. It is not published yet; until it is, install the .deb
-files of a release after checking them with `SHA256SUMS` as above. Each
-component's install document shows the APT source once it is available.
+The APT repository at <https://obpkg.org/apt> (suite `stable`, component
+`main`, amd64 and arm64) is signed with the same packages subkey
+(`InRelease`, `Release.gpg`), and apt checks it against the key named in
+the source's `Signed-By=`:
+
+```sh
+curl -fsSLo /tmp/openbasalt-release-key.asc https://obpkg.org/keys/openbasalt-release-key.asc
+gpg --show-keys --with-subkey-fingerprints /tmp/openbasalt-release-key.asc
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo gpg --dearmor -o /etc/apt/keyrings/openbasalt.gpg /tmp/openbasalt-release-key.asc
+sudo chmod 0644 /etc/apt/keyrings/openbasalt.gpg
+printf 'Types: deb\nURIs: https://obpkg.org/apt\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/openbasalt.gpg\n' |
+  sudo tee /etc/apt/sources.list.d/openbasalt.sources
+sudo apt update
+```
+
+Compare the fingerprints with the ones above before installing the key.
+apt then refuses repository metadata whose signature does not verify and
+any package whose hash differs from the signed index.
 
 ## Key rotation and compromise
 

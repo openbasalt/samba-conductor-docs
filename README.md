@@ -17,7 +17,8 @@ Optional components, each deployed on its own, extend it:
 - an agent that manages file shares on domain-member file servers.
 
 The components run as native systemd services on Debian, Ubuntu, Fedora and
-Basalt OS, each under its own user and sandbox.
+Basalt OS, each under its own user and sandbox, or as hardened container
+images ([containers](containers.md)).
 
 This repository holds the documentation that spans the components. Each
 component repository documents its own installation, configuration and
@@ -45,6 +46,9 @@ In this repository:
 - [Packaging](packaging.md): how the .deb and .rpm packages and the
   SELinux policy packages are built, what they contain, versions,
   reproducible builds, SBOMs and licenses.
+- [Container images](containers.md): the images on Docker Hub and GHCR,
+  compose files, networking, persistence, time, permissions, secrets,
+  backups, upgrades, Podman and SELinux, and how to verify an image.
 - [Verifying releases](verifying-releases.md): the release key, what it
   signs and how to check a download or a repository.
 - [Testing](testing.md): unit tests and gates, the integration lab, the
