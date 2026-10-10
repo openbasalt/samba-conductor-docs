@@ -80,10 +80,11 @@ In the component repositories:
 
 ## Status
 
-Version 0.1.0 is released for conductor, conductor-idp, conductor-sync and
-conductor-backup: signed GitHub releases (tag `v0.1.0`), Debian and Ubuntu
-packages `0.1.0-1` in the APT repository at <https://obpkg.org/apt>, and
-container images tagged `0.1.0` and `latest` on Docker Hub
+Released: conductor and conductor-idp 0.1.1, conductor-sync and
+conductor-backup 0.1.0. Each has a signed GitHub release (tag `v0.1.1` or
+`v0.1.0`) and Debian and Ubuntu packages (`0.1.1-1` or `0.1.0-1`) in the APT
+repository at <https://obpkg.org/apt>. The container images of containers
+release 0.1.1 carry these versions and are tagged `0.1.1` and `latest` on Docker Hub
 (`docker.io/openbasalt`) and GHCR (`ghcr.io/openbasalt`), with the same
 digests in both ([container images](containers.md)). Packages for Fedora
 and Basalt OS are published in the basalt-tools repository at
