@@ -42,11 +42,50 @@ docker compose run --rm conductor-setup
 docker compose up -d
 ```
 
-`conductor-setup` prints a one-time enrollment link for the first
-administrator; open it in a browser (conductor listens on port 8443 of
-`SC_HOST_IP`). The DC creates a certificate authority limited to the
+`conductor-setup` waits until the DC is healthy, then prints a one-time
+enrollment link for the first administrator; open it in a browser
+(conductor listens on port 8443 of `SC_HOST_IP`). The DC creates a certificate authority limited to the
 domain and to `SC_HOST_IP`; its certificate is on the `dc-public` volume
 (`ca.pem`) for clients that should trust it.
+
+### Setup checks
+
+conductor and the add-on services that need their own setup step (idp,
+sync and backup) each have a one-shot check that runs before them. The
+check is a small shell script in the conductor image, run as the service's
+user with no network, a read-only root, no capabilities and the service's
+configuration and credentials volumes mounted read-only. It verifies that
+the setup one-shot has written the configuration file and handed over the
+credentials, then exits. The service starts only after its check has
+completed successfully.
+
+If you run `docker compose up -d` before a setup one-shot, the check exits
+with an error, `docker compose up -d` stops and reports that the check did
+not complete successfully, and the service is created but not started, so
+nothing restarts in a loop. The check's log names what is missing and the
+command to run:
+
+```sh
+docker compose logs conductor-check
+# conductor is not configured yet (/etc/conductor/conductor.toml is missing):
+# run 'docker compose run --rm conductor-setup' (README, Quick start), then 'docker compose up -d'
+```
+
+| Check | Service it holds back | Looks for | Run first |
+|---|---|---|---|
+| `conductor-check` | conductor | `conductor.toml`, the TOTP key | `docker compose run --rm conductor-setup` |
+| `idp-check` (`addons/idp.yaml`) | idp | `idp.toml`, the master key, the service account password | `docker compose run --rm idp-setup` |
+| `sync-check` (`addons/sync.yaml`) | sync | `conductor-sync.toml`, the bind password, the state key | `docker compose run --rm sync-setup` |
+| `backup-check` (`addons/backup.yaml`) | conductor-backup | `conductor-backup.toml`, the signing key | `docker compose run --rm backup-setup` |
+
+Run the command the log names (after the steps at the top of the add-on's
+file, such as creating the service account in the DC), then
+`docker compose up -d` again. `conductor-setup`, `idp-setup` and
+`sync-setup` start the DC and wait until it is healthy, since they need
+the domain, the certificates it issues or its exported CA; `backup-setup`
+does not need the DC.
+
+### Add-ons
 
 Add-ons are listed in `COMPOSE_FILE` in `.env`; each file starts with the
 steps it needs:
@@ -57,6 +96,7 @@ steps it needs:
 | `addons/sync.yaml` | conductor-sync (Google Workspace provisioning, starts in dry-run) |
 | `addons/backup.yaml` | conductor-backup: scheduled, encrypted, signed domain backups |
 | `addons/host-network.yaml` | the DC on the host's network |
+| `addons/ipvlan.yaml`, `addons/macvlan.yaml` | the stack's network on a host interface, with LAN addresses for the DC and conductor (see Networking) |
 | `addons/provided-tls.yaml`, `addons/idp-provided-tls.yaml` | certificates from your own CA |
 | `addons/join.yaml` | an additional DC for an existing domain |
 | `addons/restore.yaml` | a full-forest recovery from a backup |
@@ -118,7 +158,29 @@ UDP), 445, 464 (TCP and UDP), 636, 3268, 3269 and an RPC range (default
 |---|---|---|---|
 | bridge (default compose) | labs, evaluation, hosts whose firewall you cannot change | the ports are published on `SC_HOST_IP` only; the DC registers `SC_HOST_IP` in DNS, not the container's address | one DC per host address; the RPC range must be published exactly |
 | host (`addons/host-network.yaml`) | production-like setups, several DCs | `network_mode: host`; Samba binds only `SC_HOST_IP` and loopback, so the host's own resolver and services keep their addresses | the host firewall must admit the ports (firewalld: the `samba-dc` service); nothing else may use port 445 on that address |
-| macvlan or ipvlan (`SC_NETWORK_MODE=macvlan`) | a DC with its own LAN address | the container's LAN address is `SC_HOST_IP`, no NAT | the host cannot reach the container without a shim interface; macvlan needs a switch that accepts extra MAC addresses |
+| ipvlan or macvlan (`addons/ipvlan.yaml`, `addons/macvlan.yaml`) | a DC and conductor with their own LAN addresses | the stack's network sits on a host interface (`SC_NET_PARENT`); the DC is at `SC_DC_ADDRESS` (also `SC_HOST_IP`) and conductor at `SC_CONDUCTOR_ADDRESS`, no NAT and no published ports | the host and the containers cannot reach each other; macvlan needs a wired port that accepts extra MAC addresses |
+
+The ipvlan and macvlan add-ons take the parent interface
+(`SC_NET_PARENT`), the mode (`SC_NET_MODE`: `l2` or `l3` for ipvlan,
+usually `bridge` for macvlan), the LAN subnet and router (`SC_NET_SUBNET`,
+`SC_NET_GATEWAY`), the part of the subnet Docker may hand out
+(`SC_NET_RANGE`) and the two fixed addresses. Each file starts with its
+variables, the steps (conductor's name is registered in the domain's DNS
+by hand) and its caveats; the main ones:
+
+- The host cannot reach the containers and they cannot reach the host, a
+  kernel rule of both drivers: open conductor from another machine, and do
+  not use the host itself as a DNS forwarder.
+- Keep `SC_NET_RANGE` and the fixed addresses out of the LAN's DHCP pool:
+  Docker does not ask the LAN which addresses are free.
+- ipvlan shares the parent's MAC address, so it works on Wi-Fi and on
+  switch ports or hypervisors that allow one MAC address per port; macvlan
+  gives each container its own MAC address and does not work there.
+- ipvlan `l3` mode has no ARP or broadcast: the subnet must be its own,
+  routed by the LAN's router to this host.
+- Published ports do not apply: with `addons/idp.yaml`, give idp a fixed
+  address in an override file and register its name with that address.
+- Neither combines with `addons/host-network.yaml`.
 
 Never publish the DC's ports on `0.0.0.0`: port 53 collides with local
 resolvers such as systemd-resolved.
@@ -345,6 +407,7 @@ Docker's `userns-remap` is fine: it maps every container the same way.
 | the DC cannot bind port 53 | another resolver on the host listens on that address; publish on `SC_HOST_IP` only, or use host networking (Samba binds only `SC_HOST_IP` and loopback) |
 | `permission denied` on a socket between containers, AVC denials | the containers do not share one MCS level (`SC_MCS_LEVEL`) |
 | a service refuses a peer on its socket | the containers run under different user namespace mappings |
+| `docker compose up -d` stops because a `-check` service did not complete successfully; conductor, idp, sync or conductor-backup stays in the created state | that service's setup one-shot has not run: `docker compose logs <check>` names the command (see Setup checks) |
 | the DC refuses to start | read the first log line: a different `SC_REALM` or `SC_HOSTNAME` than the volume's domain, an unfinished first boot (`SC_RETRY_FIRST_BOOT=1` starts it over), an unknown `SC_*` variable or a secret in the environment |
 
 `docker compose exec dc sc-dc-init health` prints the DC's checks and
