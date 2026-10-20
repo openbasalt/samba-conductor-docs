@@ -394,11 +394,12 @@ releases](verifying-releases.md#the-apt-repository-debian-ubuntu)), add the
 printf 'Types: deb\nURIs: https://obpkg.org/apt\nSuites: testing\nComponents: main\nSigned-By: /etc/apt/keyrings/openbasalt.gpg\n' |
   sudo tee /etc/apt/sources.list.d/openbasalt-testing.sources
 sudo apt update
-apt policy conductor
-sudo apt install conductor conductor-provisioner
+apt policy <pkg>
+sudo apt install <pkg>
 ```
 
-Upgrade conductor-sync the same way where it is installed.
+`<pkg>` is the package under validation (`conductor`, for example); upgrade
+each package of the release under test the same way where it is installed.
 
 Both suites have the same priority, so apt installs the highest version of
 each package: the testing version where there is one, the stable version
@@ -419,18 +420,18 @@ signature checks as `basalt-tools`. Enable it:
 
 ```sh
 sudo dnf config-manager setopt basalt-testing.enabled=1
-sudo dnf upgrade conductor
-sudo dnf install conductor-provisioner
+sudo dnf upgrade <pkg>
 ```
 
 or use it for one transaction only:
 
 ```sh
-sudo dnf --enablerepo=basalt-testing upgrade conductor
-sudo dnf --enablerepo=basalt-testing install conductor-provisioner
+sudo dnf --enablerepo=basalt-testing upgrade <pkg>
 ```
 
-Upgrade conductor-sync the same way where it is installed.
+Use `dnf install` instead of `dnf upgrade` for a package that is not
+installed yet, and upgrade each package of the release under test the same
+way where it is installed.
 
 On Fedora 44, add the repository next to `basalt-tools`
 ([verifying releases](verifying-releases.md#the-basalt-tools-repository-basalt-os-fedora-44))

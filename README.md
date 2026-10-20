@@ -104,24 +104,22 @@ In the component repositories:
 
 ## Status
 
-Released: conductor and conductor-idp 0.1.1, conductor-sync and
-conductor-backup 0.1.0. Each has a signed GitHub release (tag `v0.1.1` or
-`v0.1.0`) and Debian and Ubuntu packages (`0.1.1-1` or `0.1.0-1`) in the APT
-repository at <https://obpkg.org/apt>. The container images of containers
-release 0.1.1 carry these versions and are tagged `0.1.1` and `latest` on Docker Hub
-(`docker.io/openbasalt`) and GHCR (`ghcr.io/openbasalt`), with the same
-digests in both ([container images](containers.md)). Packages for Fedora
-and Basalt OS are published in the basalt-tools repository at
+Released: conductor and conductor-sync 0.2.0, conductor-provisioner 0.1.0
+(e-mail, invitations, password reset by e-mail and the Google-first mode),
+conductor-idp 0.1.1 and conductor-backup 0.1.0. Each has a signed GitHub
+release (tag `v0.2.0`, `v0.1.1` or `v0.1.0`) and Debian and Ubuntu packages
+(`0.2.0-1`, `0.1.1-1` or `0.1.0-1`) in the `stable` suite of the APT
+repository at <https://obpkg.org/apt>. Packages for Fedora and Basalt OS
+are published in the basalt-tools repository at
 <https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
-conductor-files and the ad library have no tagged release yet.
+The container images of containers release 0.2.0 carry these versions and
+are tagged `0.2.0` and `latest` on Docker Hub (`docker.io/openbasalt`) and
+GHCR (`ghcr.io/openbasalt`), with the same digests in both ([container
+images](containers.md)). conductor-files and the ad library have no tagged
+release yet.
 
-In testing: conductor and conductor-sync 0.2.0 and conductor-provisioner
-0.1.0 (e-mail, invitations, password reset by e-mail and the Google-first
-mode). Their Debian and Ubuntu packages (`0.2.0-1` or `0.1.0-1`) are in
-the `testing` suite of the APT repository, and their Fedora and Basalt OS
-packages in the basalt-testing repository at
-<https://obpkg.org/basalt-testing>. The stable channels still carry the
-0.1 versions until these pass validation and are promoted (see [package
+New versions go to the testing channels first and are promoted to stable
+once they pass validation (see [package
 channels](packaging.md#package-channels)).
 
 ## Contributing and security
