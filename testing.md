@@ -81,7 +81,13 @@ Integration tests:
   installed agent and its sandboxed unit, including SMB access as domain
   users;
 - conductor-sync runs the real binary against the lab domain and a
-  loopback fake of the Google Directory API.
+  loopback fake of the Google Directory API;
+- conductor-provisioner runs the service against a DC with its delegated
+  account on a lab OU: an invitation from token to a Kerberos sign-in with
+  the new password, the Google-first operations (create, update, disable
+  and move to quarantine, re-enable and move back), and the refusals for
+  accounts outside the scope OU and for privileged accounts, including an
+  account added to Domain Admins after it was created.
 
 ### End-to-end suites
 

@@ -22,9 +22,9 @@ are also published in each component repository's SECURITY.md.
 | Artifact | Signature | Key |
 |---|---|---|
 | `SHA256SUMS` of a release (covers every .deb, .rpm, policy package and SBOM) | detached OpenPGP signature, `SHA256SUMS.asc` | packages subkey |
-| Samba Conductor's APT repository metadata (`InRelease`, `Release.gpg`) | OpenPGP | packages subkey |
-| RPMs of the `basalt-tools` repository | OpenPGP signature in each package (`rpmsign`) | packages subkey |
-| Repository metadata of `basalt-tools` (`repomd.xml.asc`) | OpenPGP | packages subkey |
+| Samba Conductor's APT repository metadata, suites `stable` and `testing` (`InRelease`, `Release.gpg`) | OpenPGP | packages subkey |
+| RPMs of the `basalt-tools` and `basalt-testing` repositories | OpenPGP signature in each package (`rpmsign`) | packages subkey |
+| Repository metadata of `basalt-tools` and `basalt-testing` (`repomd.xml.asc`) | OpenPGP | packages subkey |
 | Git tags | OpenPGP or SSH signature | the key of the person who tags |
 | `SHA256SUMS` of a containers release (covers `IMAGES.txt`, the image SBOMs and scan reports) | detached OpenPGP signature, `SHA256SUMS.asc` | packages subkey |
 | Container images (each published digest) | Sigstore keyless signature (cosign), SBOM and provenance attestations | the identity of the release workflow, no long-lived key ([container images](containers.md#images-tags-and-verification)) |
@@ -32,8 +32,10 @@ are also published in each component repository's SECURITY.md.
 Packages are not signed by the build itself: signing is a release-time
 step. Individual .deb files are not signed; apt verifies them through the
 signed `InRelease`, which lists their hashes. RPMs are signed when they
-are published to `basalt-tools`, where dnf checks both the package
-signatures and the repository metadata.
+are published to `basalt-testing` or `basalt-tools`, where dnf checks
+both the package signatures and the repository metadata. The testing
+channels ([package channels](packaging.md#package-channels)) are signed
+exactly like the stable ones, so the checks below apply to both.
 
 ## Get and check the key
 
@@ -52,8 +54,11 @@ gpg --import openbasalt-release-key.asc
 
 ## Verify downloaded release files
 
-Download the packages you need together with `SHA256SUMS` and
-`SHA256SUMS.asc` from the same release, then:
+Every component release (conductor-provisioner's as well) has its own
+`SHA256SUMS` and `SHA256SUMS.asc`, covering that release's .deb and .rpm
+files, its `<pkg>-selinux` policy package and its SBOMs. Download the
+packages you need together with `SHA256SUMS` and `SHA256SUMS.asc` from the
+same release, then:
 
 ```sh
 gpg --verify SHA256SUMS.asc SHA256SUMS
@@ -63,8 +68,9 @@ sha256sum -c --ignore-missing SHA256SUMS
 `gpg --verify` must report a good signature from the OpenBasalt release
 key (made by the packages subkey); `sha256sum` must report `OK` for every
 file you downloaded. Only then install them, for example
-`sudo apt install ./conductor_<version>-1_amd64.deb` or
-`sudo dnf install ./conductor-<version>-1.x86_64.rpm`.
+`sudo apt install ./conductor-provisioner_<version>-1_amd64.deb` or
+`sudo dnf install ./conductor-provisioner-<version>-1.x86_64.rpm
+./conductor-provisioner-selinux-<version>-1.noarch.rpm`.
 
 ## Verify RPMs
 
@@ -112,6 +118,12 @@ sudo dnf install conductor
 The `<pkg>-selinux` policy package comes with each component wherever the
 targeted policy is installed.
 
+The `basalt-testing` repository is checked the same way: on Basalt OS
+`basalt-release` defines it in `/etc/yum.repos.d/basalt.repo`, disabled,
+with `gpgcheck=1`, `repo_gpgcheck=1` and the same key file, and on Fedora
+44 its `.repo` file uses the same `gpgkey` URL
+([package channels](packaging.md#fedora-and-basalt-os)).
+
 ## The APT repository (Debian, Ubuntu)
 
 The APT repository at <https://obpkg.org/apt> (suite `stable`, component
@@ -132,7 +144,9 @@ sudo apt update
 
 Compare the fingerprints with the ones above before installing the key.
 apt then refuses repository metadata whose signature does not verify and
-any package whose hash differs from the signed index.
+any package whose hash differs from the signed index. The `testing` suite
+is signed with the same key; a source for it uses the same `Signed-By=`
+([package channels](packaging.md#debian-and-ubuntu)).
 
 ## Key rotation and compromise
 

@@ -9,6 +9,7 @@ script, and `make package` builds every package of that component.
 | Package | Contents | System user | Configuration files |
 |---|---|---|---|
 | `conductor` | `conductor`, `conductor-helper`, their units | `conductor` | `/etc/conductor/helper.toml` |
+| `conductor-provisioner` | `conductor-provisioner`, its service and API socket | `conductor-provisioner` | `/etc/conductor-provisioner/provisioner.toml` |
 | `conductor-idp` | `conductor-idp`, its unit | `conductor-idp` | `/etc/conductor-idp/idp.toml` |
 | `conductor-sync` | `conductor-sync`, service, timer, management API service and socket | `conductor-sync` | `/etc/conductor-sync/conductor-sync.toml` |
 | `conductor-backup` | `conductor-backup`, DC units (service, timer, path), drill units, the helper drop-in (inactive) | `conductor-backup` | `/etc/conductor-backup/conductor-backup.toml`, `drill.toml` |
@@ -24,10 +25,19 @@ the same module, speaks a protocol versioned with conductor and needs the
 only suggests `conductor`, because a drill host must not pull conductor
 in.
 
+`conductor-provisioner` is a package of its own, because it holds a
+directory write credential that conductor's package must not carry, and
+because most installations without invitations, password reset by e-mail
+or the Google-first mode do not need it. It suggests `conductor`; install
+`conductor` first, since its API socket is created with the `conductor`
+group.
+
 The shipped configuration files are safe defaults that start nothing by
 themselves: backups off in `helper.toml`, `mode = "dry-run"` in
-`conductor-sync.toml`. `/etc/conductor/conductor.toml` is not a packaged
-file: `conductor setup` writes it and refuses to overwrite it.
+`conductor-sync.toml`, no scope OU in `provisioner.toml` (every
+operation that names an account is refused).
+`/etc/conductor/conductor.toml` is not a packaged file: `conductor setup`
+writes it and refuses to overwrite it.
 
 ## One configuration, two formats
 
@@ -115,15 +125,17 @@ Every package ships:
 
 ### Directories and secrets
 
-Each component owns `/etc/<pkg>` (0750, root and the component's group),
-a `credentials/` directory (0700, root) and `/var/lib/<pkg>` (0700, the
+Each component owns `/etc/<pkg>` (0750, root and the component's group), a
+`credentials/` directory (0700, root) and `/var/lib/<pkg>` (0700, the
 component's user). Secrets are files the administrator or a setup command
 creates in `credentials/`; packages never ship or generate them. systemd
 hands them to the service with `LoadCredential=`; the service reads
 `$CREDENTIALS_DIRECTORY/<name>`, and the credentials directory is
-inaccessible inside the sandbox. A credential can optionally be encrypted
-with the host key or a TPM (`systemd-creds encrypt`) and loaded with
-`LoadCredentialEncrypted=` from a drop-in; the service code does not
+inaccessible inside the sandbox. conductor-provisioner, for example, reads
+`account-password` (the delegated account's password) and `state-key`
+(which keys its audit chain) this way. A credential can optionally be
+encrypted with the host key or a TPM (`systemd-creds encrypt`) and loaded
+with `LoadCredentialEncrypted=` from a drop-in; the service code does not
 change.
 
 conductor-backup's drop-in for conductor-helper ships inactive in
@@ -140,18 +152,21 @@ conductor-files, which runs as root with a narrow capability set),
 `RestrictNamespaces`, `SystemCallFilter=@system-service`, kernel, clock
 and control group protections, `StateDirectory=` with mode 0700 and
 `UMask=0077`. The capability bounding set is empty for conductor,
-conductor-idp, conductor-sync and conductor-backup; conductor-helper keeps
-CHOWN, FOWNER, DAC_OVERRIDE and DAC_READ_SEARCH and may reach only
-localhost; conductor-files keeps the same plus SYS_ADMIN (for Samba's
-`security.NTACL` attribute). Scheduled work uses timers and path units;
-conductor-sync's management API uses socket activation.
+conductor-provisioner, conductor-idp, conductor-sync and conductor-backup;
+conductor-helper keeps CHOWN, FOWNER, DAC_OVERRIDE and DAC_READ_SEARCH and
+may reach only localhost; conductor-files keeps the same plus SYS_ADMIN
+(for Samba's `security.NTACL` attribute). Scheduled work uses timers and
+path units; conductor-sync's management API and conductor-provisioner use
+socket activation (conductor-provisioner's socket is owned by its user and
+the `conductor` group, mode 0660, and the service admits only conductor's
+user).
 
 Installation and upgrades follow the same rules in both formats:
 
 | Event | What happens |
 |---|---|
 | install | the system user and directories are created and systemd reloaded. Nothing is enabled or started: every component needs configuration and secrets first, and a half-configured identity or backup service must not run |
-| upgrade | running long-lived services (conductor, conductor-helper, conductor-idp, conductor-sync-api, conductor-files) are restarted; timers, sockets and paths keep their state; enabled units stay enabled |
+| upgrade | running long-lived services (conductor, conductor-helper, conductor-provisioner, conductor-idp, conductor-sync-api, conductor-files) are restarted; timers, sockets and paths keep their state; enabled units stay enabled |
 | remove | every unit is stopped and disabled; configuration and state stay |
 | purge (.deb) | `/etc/<pkg>`, `/var/lib/<pkg>`, drop-ins of the package's units and statoverrides are removed |
 
@@ -200,6 +215,7 @@ the reference policy's macros), shipped as `<pkg>-selinux`, a noarch RPM.
 | Module | Domains |
 |---|---|
 | `conductor` | `conductor_t` (conductor), `conductor_helper_t` (conductor-helper) |
+| `conductor_provisioner` | `conductor_provisioner_t`: its configuration, credentials directory, state, the API socket in `/run/conductor-provisioner` (which `conductor_t` may use), LDAPS and Kerberos to the DCs |
 | `conductor_idp` | `conductor_idp_t` |
 | `conductor_sync` | `conductor_sync_t` (scheduled runs and the management API) |
 | `conductor_backup` | `conductor_backup_t` (DC backups), `conductor_backup_drill_t` (restore drills) |
@@ -290,7 +306,8 @@ Each component is a Go module whose path is its repository path:
 | Module | Imports |
 |---|---|
 | `github.com/openbasalt/samba-conductor-ad` | |
-| `github.com/openbasalt/samba-conductor` | `ad`, `syncapi` (from conductor-sync), `filesapi` (from conductor-files) |
+| `github.com/openbasalt/samba-conductor` | `ad`, `provapi` (from conductor-provisioner), `syncapi` (from conductor-sync), `idpapi` (from conductor-idp), `filesapi` (from conductor-files) |
+| `github.com/openbasalt/samba-conductor-provisioner` | `ad` |
 | `github.com/openbasalt/samba-conductor-idp` | `ad` |
 | `github.com/openbasalt/samba-conductor-sync` | `ad` |
 | `github.com/openbasalt/samba-conductor-backup` | `ad` |
@@ -332,11 +349,111 @@ produces a `SHA256SUMS` file over every package and SBOM, signed with the
 release key ([verifying releases](verifying-releases.md)).
 
 The Debian and Ubuntu packages are published in an APT repository with one
-suite for every supported distribution (`stable`, plus `testing` for
-release candidates), component `main`, architectures amd64 and arm64: the
-packages are identical across distributions, so per-codename suites would
-only multiply metadata. The RPMs are published in Basalt OS's
-`basalt-tools` repository.
+suite for every supported distribution (`stable` and `testing`, see
+[package channels](#package-channels)), component `main`, architectures
+amd64 and arm64: the packages are identical across distributions, so
+per-codename suites would only multiply metadata. The RPMs are published
+in Basalt OS's `basalt-tools` repository and, before that, in its
+`basalt-testing` repository.
+
+## Package channels
+
+Each set of packages has two channels:
+
+| | Debian and Ubuntu | Fedora and Basalt OS |
+|---|---|---|
+| stable | suite `stable` of <https://obpkg.org/apt> | `basalt-tools`, <https://obpkg.org/basalt-tools> |
+| testing | suite `testing` of <https://obpkg.org/apt> | `basalt-testing`, <https://obpkg.org/basalt-testing> |
+
+A new version is published to testing first, for validation on real
+installations, and is promoted to stable once it passes. Both channels are
+signed with the same packages subkey ([verifying
+releases](verifying-releases.md)). The APT suites share one pool, so a
+promoted package is the same file in both suites. The testing channels
+hold only the packages being validated; every other package keeps coming
+from stable, so enable testing in addition to stable, not instead of it.
+The basalt-testing repository carries x86_64 and noarch packages.
+
+Enable testing only on installations where you validate a release. Once a
+testing version is installed, it stays when testing is disabled again.
+Downgrades are not supported: a newer version may migrate its database,
+and an older binary refuses to open a database a newer version has written.
+Going back to stable therefore means keeping the testing version until
+stable has a newer one, or reinstalling the stable version together with
+a copy of `/var/lib/<pkg>` taken before the upgrade. Take that copy, and a
+domain backup, before you upgrade from testing.
+
+### Debian and Ubuntu
+
+With the APT repository set up for `stable` and its key in
+`/etc/apt/keyrings/openbasalt.gpg` ([verifying
+releases](verifying-releases.md#the-apt-repository-debian-ubuntu)), add the
+`testing` suite as a second source:
+
+```sh
+printf 'Types: deb\nURIs: https://obpkg.org/apt\nSuites: testing\nComponents: main\nSigned-By: /etc/apt/keyrings/openbasalt.gpg\n' |
+  sudo tee /etc/apt/sources.list.d/openbasalt-testing.sources
+sudo apt update
+apt policy conductor
+sudo apt install conductor conductor-provisioner
+```
+
+Upgrade conductor-sync the same way where it is installed.
+
+Both suites have the same priority, so apt installs the highest version of
+each package: the testing version where there is one, the stable version
+otherwise. `apt policy` shows which suite each version comes from. To go
+back to stable, remove the source; installed packages stay at their
+version until stable has a newer one:
+
+```sh
+sudo rm /etc/apt/sources.list.d/openbasalt-testing.sources
+sudo apt update
+```
+
+### Fedora and Basalt OS
+
+On Basalt OS, `basalt-release` defines the `basalt-testing` repository
+(base URL from `/etc/dnf/vars/basalt_testing_url`), disabled, with the same
+signature checks as `basalt-tools`. Enable it:
+
+```sh
+sudo dnf config-manager setopt basalt-testing.enabled=1
+sudo dnf upgrade conductor
+sudo dnf install conductor-provisioner
+```
+
+or use it for one transaction only:
+
+```sh
+sudo dnf --enablerepo=basalt-testing upgrade conductor
+sudo dnf --enablerepo=basalt-testing install conductor-provisioner
+```
+
+Upgrade conductor-sync the same way where it is installed.
+
+On Fedora 44, add the repository next to `basalt-tools`
+([verifying releases](verifying-releases.md#the-basalt-tools-repository-basalt-os-fedora-44))
+as `/etc/yum.repos.d/basalt-testing.repo`:
+
+```ini
+[basalt-testing]
+name=Basalt OS testing $releasever - $basearch
+baseurl=https://obpkg.org/basalt-testing/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://obpkg.org/keys/openbasalt-release-key.asc
+```
+
+The `<pkg>-selinux` policy packages come from the same repository. To go
+back to stable, disable the repository (on Fedora 44, set `enabled=0` or
+delete the file); installed packages stay at their version until
+`basalt-tools` has a newer one:
+
+```sh
+sudo dnf config-manager setopt basalt-testing.enabled=0
+```
 
 ## Container images
 

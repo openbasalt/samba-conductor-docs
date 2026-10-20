@@ -10,10 +10,19 @@ and every change is previewed before it is applied and recorded in an
 append-only audit log (see [architecture](architecture.md) for what its
 hash chain does and does not protect against).
 
+With an SMTP relay configured, conductor also sends e-mail: invitations
+that let a new user set the first password and enroll a second factor,
+password reset by e-mail from the sign-in page, and a notice after every
+password change ([passwords](passwords.md)).
+
 Optional components, each deployed on its own, extend it:
 
 - an OpenID Connect and SAML 2.0 identity provider backed by the domain;
-- provisioning from the domain to Google Workspace;
+- delegated directory writes for invitations, password reset by e-mail
+  and the Google-first mode, through a separate service limited to the
+  managed OUs;
+- provisioning from the domain to Google Workspace and, in the opt-in
+  Google-first mode, from Google Workspace to chosen OUs of the domain;
 - encrypted domain backups, restore tooling and automated restore drills;
 - an agent that manages file shares on domain-member file servers.
 
@@ -30,8 +39,9 @@ design.
 | Repository | Contents |
 |---|---|
 | [samba-conductor](https://github.com/openbasalt/samba-conductor) | conductor: web administration, self-service and conductor-helper, the narrow privileged helper |
+| [samba-conductor-provisioner](https://github.com/openbasalt/samba-conductor-provisioner) | conductor-provisioner: delegated AD writes for invitations, password reset by e-mail and the Google-first mode, limited to the managed OUs |
 | [samba-conductor-idp](https://github.com/openbasalt/samba-conductor-idp) | conductor-idp: OpenID Connect and SAML 2.0 identity provider backed by AD |
-| [samba-conductor-sync](https://github.com/openbasalt/samba-conductor-sync) | conductor-sync: provisioning from AD to Google Workspace |
+| [samba-conductor-sync](https://github.com/openbasalt/samba-conductor-sync) | conductor-sync: provisioning from AD to Google Workspace, and the plans of the Google-first mode |
 | [samba-conductor-backup](https://github.com/openbasalt/samba-conductor-backup) | conductor-backup: encrypted domain backups, restore and restore drills |
 | [samba-conductor-files](https://github.com/openbasalt/samba-conductor-files) | conductor-files: agent for shares and NT ACLs on domain-member file servers |
 | [samba-conductor-ad](https://github.com/openbasalt/samba-conductor-ad) | the `ad` Go library for Samba AD access, shared by the components |
@@ -44,9 +54,13 @@ In this repository:
 - [Architecture](architecture.md): goals, platforms, components, how AD
   is accessed, the security model, the integration components and the
   `ad` library.
+- [Passwords by e-mail](passwords.md): how invitations, password reset
+  by e-mail and password-change notices span conductor,
+  conductor-provisioner and the mail relay.
 - [Packaging](packaging.md): how the .deb and .rpm packages and the
   SELinux policy packages are built, what they contain, versions,
-  reproducible builds, SBOMs and licenses.
+  reproducible builds, SBOMs and licenses, and the stable and testing
+  package channels.
 - [Container images](containers.md): the images on Docker Hub and GHCR,
   compose files, networking, persistence, time, permissions, secrets,
   backups, upgrades, Podman and SELinux, and how to verify an image.
@@ -61,12 +75,22 @@ In the component repositories:
   [install on Basalt OS and Fedora](https://github.com/openbasalt/samba-conductor/blob/main/docs/install-fedora.md),
   [configuration reference](https://github.com/openbasalt/samba-conductor/blob/main/docs/config.md),
   [restore runbook](https://github.com/openbasalt/samba-conductor/blob/main/docs/restore.md),
+  [e-mail](https://github.com/openbasalt/samba-conductor/blob/main/docs/mail.md),
+  [invitations and password reset](https://github.com/openbasalt/samba-conductor/blob/main/docs/passwords.md),
+  [Google-first mode](https://github.com/openbasalt/samba-conductor/blob/main/docs/google-first.md),
   [design](https://github.com/openbasalt/samba-conductor/blob/main/docs/design.md).
+- conductor-provisioner: [README](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/README.md),
+  [install](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/install.md),
+  [the delegated account](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/delegation.md),
+  [configuration reference](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/config.md),
+  [usage](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/usage.md),
+  [design](https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/design.md).
 - conductor-idp: [install](https://github.com/openbasalt/samba-conductor-idp/blob/main/docs/install.md),
   [install on Basalt OS and Fedora](https://github.com/openbasalt/samba-conductor-idp/blob/main/docs/install-fedora.md),
   [design](https://github.com/openbasalt/samba-conductor-idp/blob/main/docs/design.md).
 - conductor-sync: [README and commands](https://github.com/openbasalt/samba-conductor-sync/blob/main/README.md),
   [mapping reference](https://github.com/openbasalt/samba-conductor-sync/blob/main/docs/mapping.md),
+  [Google-first mode](https://github.com/openbasalt/samba-conductor-sync/blob/main/docs/google-first.md),
   [install on Basalt OS and Fedora](https://github.com/openbasalt/samba-conductor-sync/blob/main/docs/install-fedora.md),
   [design](https://github.com/openbasalt/samba-conductor-sync/blob/main/docs/design.md).
 - conductor-backup: [README and install](https://github.com/openbasalt/samba-conductor-backup/blob/main/README.md),
@@ -90,6 +114,15 @@ digests in both ([container images](containers.md)). Packages for Fedora
 and Basalt OS are published in the basalt-tools repository at
 <https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
 conductor-files and the ad library have no tagged release yet.
+
+In testing: conductor and conductor-sync 0.2.0 and conductor-provisioner
+0.1.0 (e-mail, invitations, password reset by e-mail and the Google-first
+mode). Their Debian and Ubuntu packages (`0.2.0-1` or `0.1.0-1`) are in
+the `testing` suite of the APT repository, and their Fedora and Basalt OS
+packages in the basalt-testing repository at
+<https://obpkg.org/basalt-testing>. The stable channels still carry the
+0.1 versions until these pass validation and are promoted (see [package
+channels](packaging.md#package-channels)).
 
 ## Contributing and security
 
