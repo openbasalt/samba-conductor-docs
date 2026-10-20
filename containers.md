@@ -80,8 +80,9 @@ docker compose logs conductor-check
 
 Run the command the log names (after the steps at the top of the add-on's
 file, such as creating the service account in the DC), then
-`docker compose up -d` again. `conductor-setup`, `idp-setup` and
-`sync-setup` start the DC and wait until it is healthy, since they need
+`docker compose up -d` again; after `idp-setup` or `sync-setup`, also
+`docker compose restart conductor` (see Add-ons). `conductor-setup`,
+`idp-setup` and `sync-setup` start the DC and wait until it is healthy, since they need
 the domain, the certificates it issues or its exported CA; `backup-setup`
 does not need the DC.
 
@@ -100,6 +101,17 @@ steps it needs:
 | `addons/provided-tls.yaml`, `addons/idp-provided-tls.yaml` | certificates from your own CA |
 | `addons/join.yaml` | an additional DC for an existing domain |
 | `addons/restore.yaml` | a full-forest recovery from a backup |
+
+`idp-setup` and `sync-setup` enable their section in conductor's
+configuration (`conductor.toml`, Single sign-on or Google Workspace sync).
+conductor reads it only when it starts, and `docker compose up -d` leaves a
+running conductor as it is, so the last step of both add-ons is a restart:
+
+```sh
+docker compose run --rm idp-setup     # or sync-setup
+docker compose up -d
+docker compose restart conductor      # loads the section the setup enabled
+```
 
 ## Images, tags and verification
 
