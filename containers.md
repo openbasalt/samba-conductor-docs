@@ -1,6 +1,6 @@
 # Container images
 
-Samba Conductor publishes five container images, built from the same
+Samba Conductor publishes six container images, built from the same
 released and signed packages as the .deb and .rpm files, so a container
 and a package of the same version run the same binaries. The images, the
 compose files and the release tooling live in
@@ -15,12 +15,13 @@ compose files and the release tooling live in
 | `samba-conductor-idp` | conductor-idp (distroless) | UID 2095 | same as the packages |
 | `samba-conductor-sync` | conductor-sync (distroless) | UID 2094 | same as the packages |
 | `samba-conductor-backup` | conductor-backup (distroless) | UID 2097 | same as the packages |
+| `samba-conductor-provisioner` | conductor-provisioner (distroless) | UID 2098 | same as the packages |
 
 The DC image is a preview: it is meant for labs, evaluation and small
 single-site domains. For production domain controllers the packages remain
 the recommended installation (see the
 [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
-The four service images are supported like the packages and can also run
+The five service images are supported like the packages and can also run
 next to domain controllers installed from packages.
 
 There is no image for the member file server agent (conductor-files needs
@@ -51,7 +52,7 @@ domain and to `SC_HOST_IP`; its certificate is on the `dc-public` volume
 ### Setup checks
 
 conductor and the add-on services that need their own setup step (idp,
-sync and backup) each have a one-shot check that runs before them. The
+sync, backup and provisioner) each have a one-shot check that runs before them. The
 check is a small shell script in the conductor image, run as the service's
 user with no network, a read-only root, no capabilities and the service's
 configuration and credentials volumes mounted read-only. It verifies that
@@ -77,12 +78,14 @@ docker compose logs conductor-check
 | `idp-check` (`addons/idp.yaml`) | idp | `idp.toml`, the master key, the service account password | `docker compose run --rm idp-setup` |
 | `sync-check` (`addons/sync.yaml`) | sync | `conductor-sync.toml`, the bind password, the state key | `docker compose run --rm sync-setup` |
 | `backup-check` (`addons/backup.yaml`) | conductor-backup | `conductor-backup.toml`, the signing key | `docker compose run --rm backup-setup` |
+| `provisioner-check` (`addons/provisioner.yaml`) | provisioner | `provisioner.toml`, the delegated account's password, the state key | `docker compose run --rm provisioner-setup` |
 
 Run the command the log names (after the steps at the top of the add-on's
 file, such as creating the service account in the DC), then
-`docker compose up -d` again; after `idp-setup` or `sync-setup`, also
-`docker compose restart conductor` (see Add-ons). `conductor-setup`,
-`idp-setup` and `sync-setup` start the DC and wait until it is healthy, since they need
+`docker compose up -d` again; after `idp-setup`, `sync-setup`,
+`provisioner-setup` or `mail-setup`, also `docker compose restart
+conductor` (see Add-ons). `conductor-setup`, `idp-setup`, `sync-setup` and
+`provisioner-setup` start the DC and wait until it is healthy, since they need
 the domain, the certificates it issues or its exported CA; `backup-setup`
 does not need the DC.
 
@@ -96,22 +99,69 @@ steps it needs:
 | `addons/idp.yaml` | conductor-idp (OpenID Connect and SAML 2.0), with conductor's second factor and passkeys |
 | `addons/sync.yaml` | conductor-sync (Google Workspace provisioning, starts in dry-run) |
 | `addons/backup.yaml` | conductor-backup: scheduled, encrypted, signed domain backups |
+| `addons/provisioner.yaml` | conductor-provisioner: the delegated account behind invitations, password resets by e-mail and the Google-first plan |
+| `addons/mail.yaml` | conductor's e-mail through your SMTP relay (the `[mail]` section) |
 | `addons/host-network.yaml` | the DC on the host's network |
 | `addons/ipvlan.yaml`, `addons/macvlan.yaml` | the stack's network on a host interface, with LAN addresses for the DC and conductor (see Networking) |
 | `addons/provided-tls.yaml`, `addons/idp-provided-tls.yaml` | certificates from your own CA |
 | `addons/join.yaml` | an additional DC for an existing domain |
 | `addons/restore.yaml` | a full-forest recovery from a backup |
 
-`idp-setup` and `sync-setup` enable their section in conductor's
-configuration (`conductor.toml`, Single sign-on or Google Workspace sync).
-conductor reads it only when it starts, and `docker compose up -d` leaves a
-running conductor as it is, so the last step of both add-ons is a restart:
+`idp-setup`, `sync-setup`, `provisioner-setup` and `mail-setup` write
+their section of conductor's configuration (`conductor.toml`: Single
+sign-on, Google Workspace sync, `[provisioner]`, `[mail]`). conductor reads
+it only when it starts, and `docker compose up -d` leaves a running
+conductor as it is, so the last step of these add-ons is a restart:
 
 ```sh
-docker compose run --rm idp-setup     # or sync-setup
+docker compose run --rm idp-setup     # or sync-setup, provisioner-setup, mail-setup
 docker compose up -d
-docker compose restart conductor      # loads the section the setup enabled
+docker compose restart conductor      # loads the section the setup wrote
 ```
+
+### Invitations and password reset by e-mail
+
+Invitations, password resets by e-mail and the Google-first mode go
+through conductor-provisioner ([passwords](passwords.md)); the messages go
+through an SMTP relay. With both add-ons in `COMPOSE_FILE`
+(`compose.yaml:addons/provisioner.yaml:addons/mail.yaml`), after
+`conductor-setup`:
+
+```sh
+# The delegated account, sensitive, a member of Domain Users only, with
+# the reset-password entries on each managed OU (default OU=People,<domain>,
+# created when missing); --google-first adds the rights of the plan.
+docker compose exec dc sc-dc-init account provisioner --ou 'OU=People,DC=example,DC=test'
+docker compose run --rm provisioner-setup
+docker compose run --rm mail-setup
+docker compose up -d
+docker compose restart conductor
+```
+
+- `secrets/provisioner-ad-password` (from `make-secrets.sh`) is the
+  account's password; `provisioner-setup` hands it to the provisioner with
+  a generated state key that keys its audit chain.
+- `SC_PROVISIONER_OUS` in `.env` lists the managed OUs, separated by `;`,
+  the same as the `--ou` flags. Only OUs below the domain head are
+  accepted, never `CN=Users` or the Domain Controllers OU.
+- `provisioner-setup` reads the role groups of `conductor.toml`
+  (administrators, helpdesk, auditors) into the provisioner's
+  `extra_group_sids`, so their members are never invited or reset by
+  e-mail. Run `conductor-setup` with the role groups first; after a change
+  of role groups, edit `extra_group_sids` in the `provisioner-etc` volume
+  and restart the provisioner.
+- The provisioner admits only conductor's UID on its socket (group 2093,
+  mode 0660, `SO_PEERCRED`) and refuses privileged and out-of-scope
+  accounts on its own.
+- `mail-setup` takes `SC_MAIL_HOST`, `SC_MAIL_FROM`, `SC_MAIL_PORT`,
+  `SC_MAIL_SECURITY` (`starttls`, `tls`, or `none` for a loopback relay
+  only), `SC_MAIL_USERNAME`, `SC_MAIL_REPLY_TO`, `SC_MAIL_HELLO_NAME` and
+  `SC_MAIL_MAX_PER_HOUR` from `.env`, the relay password from
+  `secrets/smtp-password` (needed with `SC_MAIL_USERNAME`) and an extra CA
+  for the relay from `secrets/mail-ca`; both secret files start empty.
+  Run it again whenever the relay changes.
+- The links in the messages are built from conductor's public URL
+  (`SC_PUBLIC_URL` of `conductor-setup`).
 
 ## Images, tags and verification
 
@@ -126,7 +176,7 @@ Every image is built for `linux/amd64` and `linux/arm64`.
 |---|---|---|
 | immutable | `samba-conductor-dc:0.1.0-samba4.22.11-r1`, `samba-conductor:0.1.0-r1` | one build; never moved or overwritten. `-rN` counts rebuilds of the same component versions (Debian security updates, a new base image) |
 | `testing` | | the newest release under test |
-| `X.Y.Z`, `X.Y`, `X`, `latest` | `0.1.0`, `0.1`, `0`, `latest` | a release that passed its tests; the version is the containers release, the same for the five images |
+| `X.Y.Z`, `X.Y`, `X`, `latest` | `0.1.0`, `0.1`, `0`, `latest` | a release that passed its tests; the version is the containers release, the same for the six images |
 | `sambaX.Y` (DC only) | `samba4.22` | the newest tested DC image of a Samba line |
 
 The compose files use `SC_IMAGE_PREFIX` (the registry) and `SC_TAG`, whose
@@ -222,7 +272,8 @@ between the proxy and the service.
 | `sync-etc`, `sync-state`, `sync-cred` | sync configuration, state and state key | the next full run rebuilds the state |
 | `backup-etc`, `backup-state`, `backup-cred` | backup configuration, spool, the DC's signing key | publish a new public signing key to the drill host and restore configuration |
 | `backup-local` | archives of a local backup destination | those archives; keep a remote destination too |
-| `helper-run`, `idp-run`, `sync-run`, `mfa-run` | sockets between the containers | nothing (recreated) |
+| `provisioner-etc`, `provisioner-state`, `provisioner-cred` | provisioner configuration, its database (tokens, audit log) and state key | open invitation and reset links stop working; the audit log |
+| `helper-run`, `idp-run`, `sync-run`, `mfa-run`, `provisioner-run` | sockets between the containers | nothing (recreated) |
 
 File systems: the DC stores NT ACLs in the `user.NTACL` extended
 attribute, so the volume's file system must support user extended
@@ -250,7 +301,7 @@ A container shares the host's kernel clock and the images never ask for
 | Container | User | Capabilities | Root file system |
 |---|---|---|---|
 | DC | root | `CHOWN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `FOWNER`, `FSETID` (ownership and ACLs of sysvol and state), `SETUID`, `SETGID` (Samba's and chronyd's privilege changes), `KILL` (signals to its children), `NET_BIND_SERVICE` (ports below 1024) | read-only |
-| conductor, conductor-idp, conductor-sync, conductor-backup | 2093, 2095, 2094, 2097 | none | read-only |
+| conductor, conductor-idp, conductor-sync, conductor-backup, conductor-provisioner | 2093, 2095, 2094, 2097, 2098 | none | read-only |
 | setup one-shots | root | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | read-only |
 
 Every container runs with `no-new-privileges`, never in privileged mode,
@@ -276,7 +327,8 @@ use instead.
 | Secret (`compose/secrets/`) | Used by | Created by |
 |---|---|---|
 | `admin-password` | the DC (first boot), the setup one-shots | `make-secrets.sh` |
-| `idp-ad-password`, `sync-ad-password`, `backup-account` | the service accounts of the IdP, sync and backups | `make-secrets.sh` |
+| `idp-ad-password`, `sync-ad-password`, `backup-account`, `provisioner-ad-password` | the service accounts of the IdP, sync and backups, and the provisioner's delegated account | `make-secrets.sh` |
+| `smtp-password`, `mail-ca` | the SMTP relay's password and CA (`addons/mail.yaml`) | `make-secrets.sh` creates them empty; you fill them when the relay needs them |
 | `join-password` | an additional DC (first boot) | you |
 | `s3` | backups and restores to S3-compatible storage | you |
 | `age-identity` | a restore (first boot) | you (an operator's offline key) |
@@ -285,7 +337,7 @@ use instead.
 Docker Compose mounts file secrets without honouring owner or mode, so the
 setup one-shots copy each credential the services need into a
 per-service volume (`conductor-cred`, `idp-cred`, `sync-cred`,
-`backup-cred`), mode 0400 and owned by the service's UID, mounted
+`backup-cred`, `provisioner-cred`), mode 0400 and owned by the service's UID, mounted
 read-only at `/run/credentials/<service>`; the services read them through
 `CREDENTIALS_DIRECTORY`, exactly as with systemd's `LoadCredential=` in the
 packages.

@@ -13,11 +13,13 @@ application; it shares no code with it.
 - The web administrator for Samba Active Directory: users, groups, OUs,
   computers, DNS, Group Policy links, password policies (domain and
   fine-grained), lockouts and account health, bulk operations, plus a
-  self-service portal for every user of the domain.
+  self-service portal for every user of the domain, with invitations and
+  password reset by e-mail.
 - Integration components that are deployed separately and only when
-  needed: an identity provider backed by AD, provisioning from AD to other
-  directories, domain backup and restore, and file shares on member
-  servers.
+  needed: delegated directory writes on managed OUs, an identity provider
+  backed by AD, provisioning from AD to other directories (and, opt-in,
+  from Google Workspace to AD), domain backup and restore, and file shares
+  on member servers.
 - Native services: each program runs as a systemd unit on the host, with
   its own user and sandbox. No container runtime is required.
 - Security over convenience: least privilege, no stored user passwords,
@@ -54,13 +56,16 @@ conductor is required.
 |---|---|---|---|
 | `conductor` | Web administration, self-service | the signed-in user's own Kerberos ticket (AD ACLs apply) | no |
 | `conductor-helper` | The few operations that need root on the DC: domain information read locally, online domain backups | root on the local host, over loopback | yes, narrow |
+| `conductor-provisioner` | Typed directory writes for conductor that no signed-in user makes: setting a password through a one-time link, enabling an invited account, the Google-first plan operations | a delegated account with rights on user objects below the managed OUs only | no |
 | `conductor-idp` | OpenID Connect provider and SAML 2.0 identity provider | users sign in with their own password; claims read with a read-only service account | no |
 | `conductor-sync` | Provisioning from AD to Google Workspace | read-only service account | no |
 | `conductor-backup` | Encrypted backups to local and S3-compatible storage, restore, restore drills | none (the helper makes the archive) | no on the DC; drills run as root on a separate drill host |
 | `conductor-files` | Agent on domain-member file servers: shares, NT ACLs, sessions | the member server's machine account (winbind), acting for the conductor user named in each request | yes, narrow capability set |
 
 conductor and conductor-helper run on a domain controller and ship in one
-package. conductor-idp and conductor-sync need only LDAPS and Kerberos to
+package. conductor-provisioner runs on the same host as conductor, since
+conductor reaches it only through a local socket. conductor-idp and
+conductor-sync need only LDAPS and Kerberos to
 the DCs, so they run on a DC or on any other host. conductor-files runs on
 member servers and refuses to start on a DC: Samba recommends that DCs
 host only `sysvol` and `netlogon`. conductor-backup runs on the DC that
@@ -68,14 +73,15 @@ takes the backups and, in its drill role, on a dedicated host that is not
 a DC.
 
 conductor talks to the other components through narrow typed protocols: a
-Unix socket to conductor-helper, Unix sockets to the management APIs of
-conductor-sync and conductor-idp (all check the peer's UID with
-`SO_PEERCRED`), and mutually pinned TLS to each conductor-files agent.
-In the other direction, conductor serves its second factor to
-conductor-idp on a Unix socket only conductor-idp's user may use. The
-protocol packages (`ad/helper`, `syncapi`, `idpapi`, `filesapi`) are
-public Go packages of the component that serves them (`idpapi` also holds
-the second-factor protocol conductor serves).
+Unix socket to conductor-helper, a Unix socket to conductor-provisioner,
+Unix sockets to the management APIs of conductor-sync and conductor-idp
+(all check the peer's UID with `SO_PEERCRED`), and mutually pinned TLS to
+each conductor-files agent. In the other direction, conductor serves its
+second factor to conductor-idp on a Unix socket only conductor-idp's user
+may use. The protocol packages (`ad/helper`, `provapi`, `syncapi`,
+`idpapi`, `filesapi`) are public Go packages of the component that serves
+them (`idpapi` also holds the second-factor protocol conductor serves).
+conductor sends e-mail only through the SMTP relay it is configured with.
 
 ## How AD is accessed
 
@@ -90,7 +96,9 @@ the second-factor protocol conductor serves).
   memory, under a per-process key, for the session only.
 - AD decides what a user may do. conductor's own role check (by group SID)
   is a second layer, never the only one. No service account acts for a
-  signed-in user.
+  signed-in user, with one bounded exception: conductor-provisioner's
+  delegated account, for the few typed operations listed below, which
+  conductor-provisioner re-checks on its own.
 - No access to `sam.ldb` from the web process. Operations that only
   `samba-tool` offers locally go through conductor-helper: a separate
   process on a Unix socket, an allowlist of typed operations (no free-form
@@ -170,6 +178,9 @@ the second-factor protocol conductor serves).
   database file and ship the exported log off the host if you need tamper
   evidence. conductor-idp, conductor-sync and conductor-files keep
   hash-chained audit logs of their own, with the same limits.
+  conductor-provisioner's chain is keyed instead (HMAC-SHA-256 under a key
+  derived from its state key credential), so a row cannot be changed,
+  removed or added with a valid chain without that key.
 - State: SQLite (WAL) in `/var/lib/<component>`, holding sessions,
   settings, second-factor secrets, the audit log and job history. TOTP
   secrets are sealed with AES-256-GCM (bound to the user's SID) under a
@@ -197,6 +208,87 @@ the second-factor protocol conductor serves).
   releases](verifying-releases.md)).
 
 ## Integration components
+
+### conductor-provisioner
+
+conductor's web process holds no standing write credential on AD: every
+change it makes runs with the signed-in user's own ticket. Some changes
+have no signed-in user to run them: the first password of an invited
+account, a password reset from an e-mailed link, and the accounts that the
+Google-first mode creates and updates. conductor-provisioner makes those,
+and holds the only standing AD write credential in Samba Conductor.
+
+- The delegated account is a member of Domain Users only, marked
+  sensitive (never delegated), and has access entries on the managed OUs,
+  inherited by the user objects below them only: Reset Password and
+  writes to `lockoutTime`, `pwdLastSet` and `userAccountControl`. On the
+  managed OU of a Google-first scope it also gets create and delete for
+  user objects (a move needs both) and writes to the Google-owned
+  attributes and the marker. It has no rights on the domain head,
+  `CN=Users`, `CN=System` or the `Domain Controllers` OU, no `WRITE_DAC`
+  or `WRITE_OWNER`, and no write access to `member`, `adminCount` or
+  security descriptors. `conductor-provisioner delegation preview` prints
+  the exact `samba-tool dsacl` commands.
+- It runs as its own user under its own sandboxed, socket-activated unit
+  on conductor's host, with no network listener. Its API socket
+  (`/run/conductor-provisioner/api.sock`, group `conductor`, 0660) admits
+  only conductor's user (`SO_PEERCRED`). Requests are typed operations
+  from an allowlist, decoded strictly; there is no free-form LDAP.
+- Invariants it checks on every operation, whatever conductor sends: the
+  target is read fresh by SID and must be strictly below a configured
+  scope OU (parsed DN comparison, no referrals; built-in containers cannot
+  be configured); it must be a user account; it must not be privileged
+  (nested member of the administrative groups or of conductor's role
+  groups, `adminCount` set, or holding more than read on the domain head,
+  an OU, AdminSDHolder or a Group Policy object); hourly ceilings per kind of
+  operation and a daily limit of tokens per account come from its own
+  root-owned configuration. The delegated account itself holds rights on
+  the scope OUs, so it is privileged and can never act on itself.
+- One-time tokens for invitations and resets are issued, checked and
+  consumed by conductor-provisioner, stored only as a hash and bound to the
+  account's SID, objectGUID and `pwdLastSet`: a password change by any
+  other path makes them stale. A new password crosses the socket once and
+  is never logged, audited, stored or returned.
+- The Google-first operations act only on an account carrying the marker
+  of the Google account the request names, and replace an attribute only
+  when its current value is still the one the plan read. Nothing writes
+  the marker after the account is created, and nothing deletes.
+
+What a compromised conductor web process can and cannot do through it:
+
+| It can | It cannot |
+|---|---|
+| issue and use tokens, so set the password of an ordinary account below the scope OUs and enable an invited one, within the ceilings | act on a privileged account or outside the scope OUs; raise the ceilings or change the scope OUs |
+| revoke tokens | read a stored token or recover a password |
+| create disabled Google-first accounts, change their Google-owned attributes, enable, disable and move them within their scope OU, within the ceilings | act on an account without its marker, change a marker, delete, write a group membership, a security descriptor or any other attribute |
+
+A stolen password of the delegated account, used directly against AD,
+gives what the delegation grants on the managed OUs and nothing else; the
+account's credential deserves the same care as a helpdesk
+administrator's. Design and protocol:
+<https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/design.md>;
+the delegation:
+<https://github.com/openbasalt/samba-conductor-provisioner/blob/main/docs/delegation.md>.
+
+### E-mail, invitations and password reset
+
+conductor sends e-mail through one SMTP submission relay (STARTTLS or
+implicit TLS with the certificate verified; plain SMTP only to a relay on
+loopback). Messages wait in a queue in conductor's database, sealed with
+the key that seals the second-factor secrets, with retries, an expiry per
+message (a link's message expires with the link) and an hourly ceiling;
+the log next to the queue keeps the recipient's domain, never the address
+or the content. Templates (plain text and HTML, branded, overridable) are
+listed in conductor's
+[mail.md](https://github.com/openbasalt/samba-conductor/blob/main/docs/mail.md).
+
+On top of the mail queue and conductor-provisioner, conductor offers
+invitations (an administrator or helpdesk sends a one-time link; the
+person sets the first password and enrolls a second factor, and the
+account is enabled), password reset by e-mail from a public form, an
+optional recovery address and a notice after every password change. How
+the three parts share the work, and what each one refuses:
+[passwords by e-mail](passwords.md).
 
 ### conductor-idp
 
@@ -263,6 +355,43 @@ the second-factor protocol conductor serves).
 - conductor manages it through a local management API (Unix socket,
   `SO_PEERCRED`, typed operations); applies from the browser are bound to
   the digest of the reviewed plan, and secrets are write-only.
+
+### Google-first mode
+
+The Google-first mode is the other direction, opt-in and off by default:
+for the people of chosen scopes, Google Workspace is the source of truth
+and AD follows. A scope pairs a managed OU (with a groups OU and a
+quarantine OU below it) with Google org units, optionally restricted to
+members of Google groups. It never shares an OU tree or an org unit with
+the AD to Google direction.
+
+- conductor-sync reads Google with read-only scopes and AD with its
+  read-only account and returns a plan of typed AD operations (updates,
+  primary address changes, re-enables, creates, disables) with a digest
+  and safety limits. It writes neither to Google nor to AD.
+- conductor shows the plan; an administrator applies it with the digest
+  typed and a fresh second factor. conductor applies each operation
+  through conductor-provisioner, sends an invitation to each account
+  created, and reports the results to conductor-sync, which records the
+  links.
+- conductor-provisioner re-checks every operation: scope, privilege, the
+  marker of the Google account, and the values the plan read.
+- Privileged access is granted only in AD: nothing from Google creates or
+  widens a privileged membership, Google administrator roles map to
+  nothing, and a privileged AD account is never changed by a plan (it is
+  listed as skipped so a person acts in AD). Accounts suspended,
+  deleted or no longer selected in Google are disabled and moved to the
+  quarantine OU, never deleted.
+- Google keeps its own sign-in in this mode: conductor refuses to turn it
+  on while a conductor-idp application targets Google, and the reverse.
+  The Google password is never written to AD or read from it; people set
+  their AD password through an invitation.
+
+Details: conductor-sync's
+[google-first.md](https://github.com/openbasalt/samba-conductor-sync/blob/main/docs/google-first.md)
+(reads, plan, limits, field ownership) and conductor's
+[google-first.md](https://github.com/openbasalt/samba-conductor/blob/main/docs/google-first.md)
+(settings, plan review, apply, fields shown as managed by Google).
 
 ### conductor-files
 
@@ -349,9 +478,9 @@ the second-factor protocol conductor serves).
 
 The AD access layer is a standalone Go module,
 `github.com/openbasalt/samba-conductor-ad` (package `ad`), used by
-conductor, conductor-idp, conductor-sync and conductor-backup. It has no
-global state, takes a `context.Context` on every network call and returns
-typed errors. It provides:
+conductor, conductor-provisioner, conductor-idp, conductor-sync and
+conductor-backup. It has no global state, takes a `context.Context` on
+every network call and returns typed errors. It provides:
 
 - connections: LDAPS with CA pinning, DC discovery from SRV records,
   preferred DCs and failover;
