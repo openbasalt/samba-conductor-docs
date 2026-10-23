@@ -104,16 +104,16 @@ In the component repositories:
 
 ## Status
 
-Released: conductor and conductor-sync 0.2.0, conductor-provisioner 0.1.0
+Released: conductor and conductor-sync 0.2.1, conductor-provisioner 0.1.1
 (e-mail, invitations, password reset by e-mail and the Google-first mode),
-conductor-idp 0.1.1 and conductor-backup 0.1.0. Each has a signed GitHub
-release (tag `v0.2.0`, `v0.1.1` or `v0.1.0`) and Debian and Ubuntu packages
-(`0.2.0-1`, `0.1.1-1` or `0.1.0-1`) in the `stable` suite of the APT
+conductor-idp 0.1.2 and conductor-backup 0.1.1, a security update built
+with Go 1.27.3. Each has a signed GitHub release (tag `v0.2.1`, `v0.1.2` or `v0.1.1`) and Debian and Ubuntu
+packages (`0.2.1-1`, `0.1.2-1` or `0.1.1-1`) in the `stable` suite of the APT
 repository at <https://obpkg.org/apt>. Packages for Fedora and Basalt OS
 are published in the basalt-tools repository at
 <https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
-The container images of containers release 0.2.0 carry these versions and
-are tagged `0.2.0` and `latest` on Docker Hub (`docker.io/openbasalt`) and
+The container images of containers release 0.2.0 carry the previous
+versions (conductor and conductor-sync 0.2.0) and are tagged `0.2.0` and `latest` on Docker Hub (`docker.io/openbasalt`) and
 GHCR (`ghcr.io/openbasalt`), with the same digests in both ([container
 images](containers.md)). conductor-files and the ad library have no tagged
 release yet.
