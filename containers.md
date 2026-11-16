@@ -38,10 +38,22 @@ git clone https://github.com/openbasalt/samba-conductor-containers
 cd samba-conductor-containers/compose
 cp .env.example .env          # domain, NetBIOS name, host name, this host's address
 ./make-secrets.sh             # random passwords in ./secrets (0600)
-docker compose up -d dc       # provisions the domain (about a minute)
+docker compose -f compose.yaml -f addons/provision.yaml up -d dc   # provisions the domain (about a minute)
 docker compose run --rm conductor-setup
-docker compose up -d
+docker compose up -d          # recreates the DC without the admin-password secret
 ```
+
+The first command is the only start that gives the DC the
+`admin-password` secret: `addons/provision.yaml` mounts it for the
+provisioning boot and is never listed in `COMPOSE_FILE`, so the next
+`docker compose up -d` recreates the DC without it while the domain on the
+volume stays. When your `COMPOSE_FILE` has files that change the DC (a
+network add-on such as `addons/ipvlan.yaml` or
+`addons/host-network.yaml`), add them before `addons/provision.yaml` in
+that first command, for example
+`docker compose -f compose.yaml -f addons/ipvlan.yaml -f addons/provision.yaml up -d dc`.
+Once `conductor-setup` has run, move `./secrets/admin-password` to your
+password manager: the running stack does not read it again.
 
 `conductor-setup` waits until the DC is healthy, then prints a one-time
 enrollment link for the first administrator; open it in a browser
@@ -326,7 +338,7 @@ use instead.
 
 | Secret (`compose/secrets/`) | Used by | Created by |
 |---|---|---|
-| `admin-password` | the DC (first boot), the setup one-shots | `make-secrets.sh` |
+| `admin-password` | the DC (the provisioning boot only, through `addons/provision.yaml`), the setup one-shots | `make-secrets.sh` |
 | `idp-ad-password`, `sync-ad-password`, `backup-account`, `provisioner-ad-password` | the service accounts of the IdP, sync and backups, and the provisioner's delegated account | `make-secrets.sh` |
 | `smtp-password`, `mail-ca` | the SMTP relay's password and CA (`addons/mail.yaml`) | `make-secrets.sh` creates them empty; you fill them when the relay needs them |
 | `join-password` | an additional DC (first boot) | you |
@@ -342,12 +354,21 @@ read-only at `/run/credentials/<service>`; the services read them through
 `CREDENTIALS_DIRECTORY`, exactly as with systemd's `LoadCredential=` in the
 packages.
 
-After the first boot, remove `admin-password`, `join-password` and
-`age-identity` from the stack; the DC logs a warning while they stay
-mounted. Without `admin-password` the DC generates the Administrator
-password, keeps it on the volume (0400) and logs only where it is:
-`docker compose exec dc sc-dc-init show-initial-password` prints it and
-`forget-initial-password` deletes it.
+The DC sees `admin-password` only during the provisioning boot (see Quick
+start): neither `compose.yaml` nor the other add-ons mount it. After the
+first boot of a join or a restore, remove `join-password` and
+`age-identity` from the stack; the DC logs a warning while any first-boot
+secret is still mounted.
+
+Provisioned without `admin-password` (no `addons/provision.yaml`), the DC
+generates the Administrator password and keeps it only on the container's
+tmpfs, never on the data volume.
+`docker compose exec dc sc-dc-init show-initial-password` prints it once
+and removes it; a restart of the container loses it, after which you set
+a new one with `samba-tool user setpassword Administrator` inside the DC
+container. `conductor-setup` then needs it in `./secrets/admin-password`.
+A generated password that an earlier image left on the data volume is
+moved to the tmpfs at the next start.
 
 ## Additional DCs and Windows clients
 
@@ -355,7 +376,10 @@ password, keeps it on the volume (0400) and logs only where it is:
 (`SC_MODE=join`, host networking): set `SC_JOIN_DC` to an existing DC's
 address and put the join account's password in `secrets/join-password`.
 Before joining, the DC checks the clock against the target and that its
-host name is not already a DC object of the domain. After the join, check
+host name is not already a DC object of the domain. That check signs in
+with Kerberos only (no NTLM fallback) over a signed and sealed LDAP
+connection to the target DC's host name, which must be in the realm; any
+failure stops the join. After the join, check
 replication with `samba-tool drs showrepl` on both sides.
 
 Samba does not replicate SYSVOL. Edit Group Policy on one DC, copy its
