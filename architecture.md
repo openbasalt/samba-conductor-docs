@@ -449,6 +449,10 @@ Details: conductor-sync's
   checked (LDAP, SRV records, a Kerberos sign-in of a probe account, the
   user count, sample SIDs). The measured restore time and every check go
   into a signed report that conductor shows and audits.
+  The drill host's Samba must use the same KDC as the DCs': Debian builds
+  use Heimdal and Fedora builds MIT Kerberos, and a restored domain keeps
+  the KDC files of the build that made the backup. Drilling a backup of a
+  Debian DC on a Fedora drill host, or the reverse, is not supported.
 - Alerts by e-mail and signed webhook when a backup or drill fails, a
   destination misses a backup, or the last good backup is too old;
   conductor shows a dashboard banner.
