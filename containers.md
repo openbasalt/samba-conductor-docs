@@ -72,6 +72,19 @@ the setup one-shot has written the configuration file and handed over the
 credentials, then exits. The service starts only after its check has
 completed successfully.
 
+Before `conductor-check`, the one-shot `conductor-keys` (root, no network,
+`CHOWN`, `DAC_OVERRIDE` and `FOWNER` only) makes sure conductor has its
+audit key. conductor chains its audit log with an HMAC under that key and
+does not start without it. `conductor-setup` creates the key next to the
+TOTP key, at `/etc/conductor/credentials/audit-key` on the `conductor-etc`
+volume (root, 0600), the same file the packages create. On a stack set up
+by an image from before the key existed, `conductor-keys` creates it at the
+first `docker compose up -d` after the upgrade. It hands the key over to
+conductor at every start, never replaces an existing key, and stops the
+start when the key is there but cannot be read or is not a valid key,
+since a new key cannot verify the existing audit log. Before
+`conductor-setup` has run it does nothing.
+
 If you run `docker compose up -d` before a setup one-shot, the check exits
 with an error, `docker compose up -d` stops and reports that the check did
 not complete successfully, and the service is created but not started, so
@@ -86,7 +99,7 @@ docker compose logs conductor-check
 
 | Check | Service it holds back | Looks for | Run first |
 |---|---|---|---|
-| `conductor-check` | conductor | `conductor.toml`, the TOTP key | `docker compose run --rm conductor-setup` |
+| `conductor-check` | conductor | `conductor.toml`, the TOTP key, the audit key | `docker compose run --rm conductor-setup` |
 | `idp-check` (`addons/idp.yaml`) | idp | `idp.toml`, the master key, the service account password | `docker compose run --rm idp-setup` |
 | `sync-check` (`addons/sync.yaml`) | sync | `conductor-sync.toml`, the bind password, the state key | `docker compose run --rm sync-setup` |
 | `backup-check` (`addons/backup.yaml`) | conductor-backup | `conductor-backup.toml`, the signing key | `docker compose run --rm backup-setup` |
@@ -279,7 +292,7 @@ between the proxy and the service.
 | `dc-data`, `dc-config` | the domain database, sysvol, TLS files, the state file; `smb.conf` | this DC is gone: join a new one (other DCs alive) or restore from a backup |
 | `dc-public` | the CA certificate, the domain's `krb5.conf` and client `smb.conf` for the other containers | recreated by the DC at its next start |
 | `dc-issued` | the web certificates the DC's self-signed CA issues for conductor and conductor-idp (read by the setup one-shots) | reissued at the next start |
-| `conductor-etc`, `conductor-state`, `conductor-cred` | conductor's configuration, database (second factors, audit log) and TOTP key | second-factor enrollments and the audit log; keep an offline copy of the TOTP key |
+| `conductor-etc`, `conductor-state`, `conductor-cred` | conductor's configuration, database (second factors, audit log), TOTP key and audit key | second-factor enrollments and the audit log; keep an offline copy of the TOTP key and the audit key (without the audit key the audit log cannot be verified) |
 | `idp-etc`, `idp-state`, `idp-cred` | registered applications, signing keys, IdP settings and branding | applications must be registered again |
 | `sync-etc`, `sync-state`, `sync-cred` | sync configuration, state and state key | the next full run rebuilds the state |
 | `backup-etc`, `backup-state`, `backup-cred` | backup configuration, spool, the DC's signing key | publish a new public signing key to the drill host and restore configuration |
@@ -425,6 +438,11 @@ name. It requires `SC_RESTORE_CONFIRM=<REALM>`; never run it while another
 DC of the domain is running. Afterwards remove `age-identity` from the
 stack and follow the next steps the restore prints, as in the
 [restore runbook](https://github.com/openbasalt/samba-conductor/blob/main/docs/restore.md).
+The audit log in the restored conductor database is keyed with the old
+audit key: put your offline copy at `/etc/conductor/credentials/audit-key`
+on the new `conductor-etc` volume (root, 0600) before `conductor-setup`,
+which keeps an existing key, or `conductor audit verify` cannot check the
+restored rows.
 
 ## Upgrades
 
@@ -453,6 +471,17 @@ rolling back an image after an upgrade fails at start instead of damaging
 data: restore the volumes from before the upgrade to roll back.
 conductor-helper (in the DC image) and conductor must come from the same
 release; keep the DC and conductor images on the same tag.
+
+An image whose conductor keys its audit log needs the audit key, and
+`conductor-keys` creates it at the first start after the upgrade (see
+Setup checks); keep an offline copy of it with the TOTP key. Check the
+chain and issue enrollment links inside the conductor container, as the
+conductor user that owns the database, which can read the handed-over key:
+
+```sh
+docker compose exec conductor conductor audit verify
+docker compose exec conductor conductor enroll-link --user <sAMAccountName>
+```
 
 ## Podman, rootless and SELinux
 
