@@ -97,7 +97,10 @@ freshly reset lab each time: refused sign-ins and their messages, the
 per-account rate limit, expired passwords, second factor enrollment (TOTP,
 and WebAuthn through the browser's virtual authenticator), administration
 of users, groups, OUs, DNS, Group Policy and password policies, lockouts
-across both DCs, bulk operations, backups and drills, the Google
+across both DCs, bulk operations, a user's Attributes tab and the
+attribute editor (secrets absent, invalid and duplicate values refused,
+old and new values in the audit, the editor's pages missing when it is
+turned off), backups and drills, the Google
 Workspace sync section, file servers with SMB access checked as domain
 users, self-service, and what each role (administrator, helpdesk,
 auditor) may and may not see. The browser trusts exactly conductor's

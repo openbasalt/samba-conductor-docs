@@ -114,9 +114,20 @@ conductor sends e-mail only through the SMTP relay it is configured with.
   and `dnsNode` objects, `dnsRecord` encoded per MS-DNSP) with the user's
   own connection, so the same ACLs and previews apply. Every change
   increments the zone's SOA serial with the old value asserted, so
-  concurrent changes conflict instead of overwriting each other. Zones and
-  records that AD manages (the domain and `_msdcs` zones, locator records,
-  DC host records) are read-only.
+  concurrent changes conflict instead of overwriting each other. The zones
+  AD created (the domain zone and the forest's `_msdcs` zone) cannot be
+  deleted, and the records AD manages are read-only: the apex SOA and NS
+  records, everything in the `_msdcs` zone, the names a DC registers for
+  itself (the `_ldap`, `_kerberos`, `_kpasswd` and `_gc` locators under
+  `_tcp` and `_udp`, and every name under `_msdcs`, `_sites`,
+  `DomainDnsZones` and `ForestDnsZones`), the domain apex addresses and
+  the DC host records. A leading underscore alone does not make a name
+  AD's: `_dmarc`, `sel._domainkey`, `_acme-challenge`, `_mta-sts` or
+  `_sip._tcp` are the administrator's to edit. A new A or AAAA record can
+  bring its PTR record when a reverse zone covers the address: it goes
+  into the most specific covering zone, after the address record, as a
+  change of its own with the same checks and its own audit entry, and an
+  existing PTR record is never changed.
 - LDAP hygiene: every search is paged (RFC 2696), sorted lists use the
   RFC 2891 sort control, filters are built only by an RFC 4515 builder and
   DNs escaped per RFC 4514, LDAPS requires a pinned CA (TLS 1.2 or later).
@@ -144,6 +155,30 @@ conductor sends e-mail only through the SMTP relay it is configured with.
   groups by SID. Roles are re-checked against AD (the user's
   `tokenGroups`, read with the user's own ticket) on every privileged
   request, cached at most 60 seconds; a failed re-check ends the session.
+- Lists are narrowed, never widened: the Users, Groups and Computers lists
+  can be limited to one OU (the `ou` query parameter). The value is used
+  only as the search base, never inside an LDAP filter, and only when it
+  parses as a DN below the domain and matches a container just read from
+  the directory with the user's own connection; anything else falls back
+  to the whole domain.
+- Raw attributes: a user's Attributes tab (permission `users.attributes`,
+  administrators and auditors) lists every attribute the signed-in user
+  may read on the account, read with that user's own ticket. Secret
+  attributes (password hashes and histories, `supplementalCredentials`,
+  gMSA, LAPS, BitLocker and TPM data, key credentials,
+  `nTSecurityDescriptor`, trust secrets) are never shown, even when the
+  DC returns them; values that are not valid UTF-8 or hold control
+  characters show only their size, and long values and lists are capped.
+- Attribute editor: off by default, enabled with
+  `[ui] advanced_attribute_edit`, for administrators only. It writes an
+  allowlist of Unix and mail attributes (`loginShell`,
+  `unixHomeDirectory`, `uidNumber`, `gidNumber`, `gecos`,
+  `otherMailbox`), each value validated on the server, a duplicate
+  `uidNumber` refused, and so is an attribute the Google-first mode
+  owns. The write is conditional on the values read, previewed and
+  audited with old and new values; protected accounts always ask for
+  re-authentication, other accounts when the second factor is more than
+  five minutes old. Turned off, its pages answer 404.
 - Protected accounts: members of the administrator groups and of AD's
   built-in privileged groups. Helpdesk never acts on them; administrators
   re-authenticate (password and second factor, a fresh Kerberos sign-in)
@@ -499,6 +534,10 @@ every network call and returns typed errors. It provides:
   OUs, computers, DNS zones and records, Group Policy links, domain and
   fine-grained password policies, with optimistic concurrency where AD
   allows it;
+- a raw read of every attribute of an entry with secret attributes hidden,
+  and a restricted editor for a short allowlist of Unix and mail
+  attributes of a user, with per-attribute validation;
+- the DNS policy that tells which zones and records AD manages;
 - typed `samba-tool` operations (`ad/sambatool`) with an exact command
   preview, and the helper protocol (`ad/helper`).
 
