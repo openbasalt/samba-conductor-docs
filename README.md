@@ -66,6 +66,8 @@ In this repository:
   backups, upgrades, Podman and SELinux, and how to verify an image.
 - [Verifying releases](verifying-releases.md): the release key, what it
   signs and how to check a download or a repository.
+- [Upgrading](upgrading.md): what to do before and after upgrading to a
+  new release, starting with conductor 0.3.0.
 - [Testing](testing.md): unit tests and gates, the integration lab, the
   package lab and restore exercises.
 
@@ -104,15 +106,19 @@ In the component repositories:
 
 ## Status
 
-Released: conductor and conductor-sync 0.2.1, conductor-provisioner 0.1.1
-(e-mail, invitations, password reset by e-mail and the Google-first mode),
-conductor-idp 0.1.2 and conductor-backup 0.1.1, a security update built
-with Go 1.27.3. Each has a signed GitHub release (tag `v0.2.1`, `v0.1.2` or `v0.1.1`) and Debian and Ubuntu
-packages (`0.2.1-1`, `0.1.2-1` or `0.1.1-1`) in the `stable` suite of the APT
+Released on 2026-11-24: conductor 0.3.0, conductor-idp 0.2.0,
+conductor-sync 0.3.0, conductor-backup 0.2.0 and conductor-provisioner
+0.1.2, built with Go 1.27.4 (container filter, PTR records, editable
+underscore records, multi-line TXT data, a user Attributes tab, and
+security hardening across the components). Each has a signed tag
+(`v0.3.0`, `v0.2.0` or `v0.1.2`) and Debian and Ubuntu packages
+(`0.3.0-1`, `0.2.0-1` or `0.1.2-1`) in the `stable` suite of the APT
 repository at <https://obpkg.org/apt>. Packages for Fedora and Basalt OS
 are published in the basalt-tools repository at
 <https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
-The container images of containers release 0.2.0 carry the previous
+Read [upgrading](upgrading.md) before upgrading from conductor 0.2.x:
+conductor needs an audit key, and conductor and conductor-idp are upgraded
+together. The container images of containers release 0.2.0 carry earlier
 versions (conductor and conductor-sync 0.2.0) and are tagged `0.2.0` and `latest` on Docker Hub (`docker.io/openbasalt`) and
 GHCR (`ghcr.io/openbasalt`), with the same digests in both ([container
 images](containers.md)). conductor-files and the ad library have no tagged
