@@ -118,11 +118,16 @@ are published in the basalt-tools repository at
 <https://obpkg.org/basalt-tools> (see the [install guide](https://github.com/openbasalt/samba-conductor/blob/main/docs/install.md)).
 Read [upgrading](upgrading.md) before upgrading from conductor 0.2.x:
 conductor needs an audit key, and conductor and conductor-idp are upgraded
-together. The container images of containers release 0.2.0 carry earlier
-versions (conductor and conductor-sync 0.2.0) and are tagged `0.2.0` and `latest` on Docker Hub (`docker.io/openbasalt`) and
-GHCR (`ghcr.io/openbasalt`), with the same digests in both ([container
-images](containers.md)). conductor-files and the ad library have no tagged
-release yet.
+together. The container images of containers release 0.3.0 carry
+conductor 0.3.0, conductor-idp 0.2.0, conductor-sync 0.3.0,
+conductor-backup 0.2.0 and conductor-provisioner 0.1.2. They were
+published on 2026-11-25 on Docker Hub (`docker.io/openbasalt`) and GHCR
+(`ghcr.io/openbasalt`), with the same digests in both, under the
+`testing` tag; `0.3.0` and `latest` name them once they are promoted, and
+until then `latest` is containers release 0.2.0 ([container
+images](containers.md)). Move the compose checkout to the same release as
+the images ([upgrades](containers.md#upgrades)).
+conductor-files and the ad library have no tagged release yet.
 
 New versions go to the testing channels first and are promoted to stable
 once they pass validation (see [package

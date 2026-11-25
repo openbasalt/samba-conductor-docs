@@ -99,7 +99,8 @@ the unit (or set `[audit] key_file`).
 Back the key up offline, with the TOTP key and the operator's age key.
 Neither key is in conductor-backup archives, and without the audit key the
 keyed part of the chain cannot be verified after a restore. Container
-installs: see [container images](containers.md).
+installs: see [upgrading to 0.3.0](containers.md#upgrading-to-030) in
+the container guide.
 
 `conductor audit verify` and `conductor enroll-link` now read the key as
 root and then drop to the owner of the database, so they run with `sudo`

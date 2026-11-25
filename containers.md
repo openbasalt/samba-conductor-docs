@@ -36,19 +36,20 @@ clock:
 ```sh
 git clone https://github.com/openbasalt/samba-conductor-containers
 cd samba-conductor-containers/compose
-cp .env.example .env          # domain, NetBIOS name, host name, this host's address
+cp .env.example .env          # domain, NetBIOS name, host name, this host's address, image tag
 ./make-secrets.sh             # random passwords in ./secrets (0600)
 docker compose -f compose.yaml -f addons/provision.yaml up -d dc   # provisions the domain (about a minute)
-docker compose run --rm conductor-setup
-docker compose up -d          # recreates the DC without the admin-password secret
+docker compose run --rm conductor-setup   # recreates the DC without the admin-password secret
+docker compose up -d          # starts conductor
 ```
 
 The first command is the only start that gives the DC the
 `admin-password` secret: `addons/provision.yaml` mounts it for the
-provisioning boot and is never listed in `COMPOSE_FILE`, so the next
-`docker compose up -d` recreates the DC without it while the domain on the
-volume stays. When your `COMPOSE_FILE` has files that change the DC (a
-network add-on such as `addons/ipvlan.yaml` or
+provisioning boot and is never listed in `COMPOSE_FILE`, so `docker
+compose run --rm conductor-setup`, which starts the DC it depends on,
+recreates the DC without it while the domain on the volume stays (any
+later `docker compose up -d` does the same). When your `COMPOSE_FILE`
+has files that change the DC (a network add-on such as `addons/ipvlan.yaml` or
 `addons/host-network.yaml`), add them before `addons/provision.yaml` in
 that first command, for example
 `docker compose -f compose.yaml -f addons/ipvlan.yaml -f addons/provision.yaml up -d dc`.
@@ -78,8 +79,9 @@ audit key. conductor chains its audit log with an HMAC under that key and
 does not start without it. `conductor-setup` creates the key next to the
 TOTP key, at `/etc/conductor/credentials/audit-key` on the `conductor-etc`
 volume (root, 0600), the same file the packages create. On a stack set up
-by an image from before the key existed, `conductor-keys` creates it at the
-first `docker compose up -d` after the upgrade. It hands the key over to
+by a release from before the key existed, `conductor-keys` creates it at
+the first `docker compose up -d` after the upgrade, once the compose
+checkout is on the new release (see Upgrades). It hands the key over to
 conductor at every start, never replaces an existing key, and stops the
 start when the key is there but cannot be read or is not a valid key,
 since a new key cannot verify the existing audit log. Before
@@ -106,7 +108,7 @@ docker compose logs conductor-check
 | `provisioner-check` (`addons/provisioner.yaml`) | provisioner | `provisioner.toml`, the delegated account's password, the state key | `docker compose run --rm provisioner-setup` |
 
 Run the command the log names (after the steps at the top of the add-on's
-file, such as creating the service account in the DC), then
+file, such as creating the service account in the DC, see Add-ons), then
 `docker compose up -d` again; after `idp-setup`, `sync-setup`,
 `provisioner-setup` or `mail-setup`, also `docker compose restart
 conductor` (see Add-ons). `conductor-setup`, `idp-setup`, `sync-setup` and
@@ -132,6 +134,20 @@ steps it needs:
 | `addons/join.yaml` | an additional DC for an existing domain |
 | `addons/restore.yaml` | a full-forest recovery from a backup |
 
+The idp, sync and provisioner add-ons give the DC their service account's
+password as a secret (`idp-ad-password`, `sync-ad-password`,
+`provisioner-ad-password`), and `sc-dc-init account` reads it there. A DC
+started before the add-on was in `COMPOSE_FILE` does not have it yet, and
+`docker compose exec dc sc-dc-init account idp` fails because
+`/run/secrets/idp-ad-password` is missing. Run
+`docker compose up -d dc` first, which recreates the DC with the secret; the backup add-on
+does the same for `backup-account`:
+
+```sh
+docker compose up -d dc                  # the DC with the add-on's secret
+docker compose exec dc sc-dc-init account idp   # or sync, backup, provisioner
+```
+
 `idp-setup`, `sync-setup`, `provisioner-setup` and `mail-setup` write
 their section of conductor's configuration (`conductor.toml`: Single
 sign-on, Google Workspace sync, `[provisioner]`, `[mail]`). conductor reads
@@ -156,6 +172,7 @@ through an SMTP relay. With both add-ons in `COMPOSE_FILE`
 # The delegated account, sensitive, a member of Domain Users only, with
 # the reset-password entries on each managed OU (default OU=People,<domain>,
 # created when missing); --google-first adds the rights of the plan.
+docker compose up -d dc       # the DC with secrets/provisioner-ad-password
 docker compose exec dc sc-dc-init account provisioner --ou 'OU=People,DC=example,DC=test'
 docker compose run --rm provisioner-setup
 docker compose run --rm mail-setup
@@ -355,7 +372,7 @@ use instead.
 | `idp-ad-password`, `sync-ad-password`, `backup-account`, `provisioner-ad-password` | the service accounts of the IdP, sync and backups, and the provisioner's delegated account | `make-secrets.sh` |
 | `smtp-password`, `mail-ca` | the SMTP relay's password and CA (`addons/mail.yaml`) | `make-secrets.sh` creates them empty; you fill them when the relay needs them |
 | `join-password` | an additional DC (first boot) | you |
-| `s3` | backups and restores to S3-compatible storage | you |
+| `s3` | backups and restores to S3-compatible storage; `backup-setup` needs the file even for a local destination only (an empty file) | you |
 | `age-identity` | a restore (first boot) | you (an operator's offline key) |
 | `dc-tls-cert`, `dc-tls-key`, `dc-tls-ca`, `conductor-tls-cert`, `conductor-tls-key`, `idp-tls-cert`, `idp-tls-key` | provided TLS | your CA |
 
@@ -421,6 +438,14 @@ database. Restore drills run on a drill host installed from the packages,
 never in these containers
 ([conductor-backup](https://github.com/openbasalt/samba-conductor-backup/blob/main/README.md)).
 
+The destination is S3-compatible storage (`SC_BACKUP_S3_ENDPOINT` and
+`SC_BACKUP_S3_BUCKET` in `.env`, the credential in `secrets/s3`), a local
+directory on the `backup-local` volume
+(`SC_BACKUP_LOCAL_DIR=/var/backups/conductor-backup`), or both.
+`backup-setup` mounts `secrets/s3` in every case, so the file must exist
+even for a local destination only; an empty file is accepted then. The
+steps are at the top of `addons/backup.yaml`.
+
 conductor-idp's and conductor-sync's state is not in the archive: back up
 their volumes (`idp-*`, `sync-*`) with the containers stopped, for example
 with `tar` from a throwaway container.
@@ -446,10 +471,24 @@ restored rows.
 
 ## Upgrades
 
-Take a backup run first. Then change `SC_TAG` (or the digest) and run
-`docker compose pull` and `docker compose up -d`. In a domain with several
-DCs, upgrade one DC at a time and check `samba-tool drs showrepl` between
-them.
+The compose files and the images of a release go together: a release can
+add a service, a volume or a mount that its images need, and the compose
+files of an earlier release do not have it. Always move the compose
+checkout to the release you install before you pull its images. Read the
+component notes in [upgrading](upgrading.md) first, and take a backup run.
+
+1. Update the compose checkout to the release tag, for example
+   `git fetch --tags && git checkout v0.3.0` in your clone of
+   samba-conductor-containers. Your `.env` and `secrets/` are not tracked
+   and stay as they are; compare `.env` with the new `.env.example` for
+   new variables.
+2. Set `SC_TAG` in `.env` to that release, or remove it, since the
+   default is the checkout's release (or pin the digests of its
+   `IMAGES.txt`).
+3. Run `docker compose pull` and `docker compose up -d` in `compose/`.
+
+In a domain with several DCs, upgrade one DC at a time and check
+`samba-tool drs showrepl` between them.
 
 At every start the DC compares the image's Samba version with the version
 that last ran the domain:
@@ -472,16 +511,34 @@ data: restore the volumes from before the upgrade to roll back.
 conductor-helper (in the DC image) and conductor must come from the same
 release; keep the DC and conductor images on the same tag.
 
-An image whose conductor keys its audit log needs the audit key, and
-`conductor-keys` creates it at the first start after the upgrade (see
-Setup checks); keep an offline copy of it with the TOTP key. Check the
-chain and issue enrollment links inside the conductor container, as the
-conductor user that owns the database, which can read the handed-over key:
+Check the audit chain and issue enrollment links inside the conductor
+container, as the conductor user that owns the database, which can read
+the handed-over key:
 
 ```sh
 docker compose exec conductor conductor audit verify
 docker compose exec conductor conductor enroll-link --user <sAMAccountName>
 ```
+
+### Upgrading to 0.3.0
+
+conductor 0.3.0 does not start without its audit key. The one-shot
+`conductor-keys`, which exists only in the compose files of 0.3.0 and
+later, creates the key once at the first `docker compose up -d` (see
+Setup checks) and never replaces it. Keep an offline copy of
+`/etc/conductor/credentials/audit-key` from the `conductor-etc` volume
+with the TOTP key: neither is in the backup archives.
+
+With a compose checkout from 0.2.0 and only `SC_TAG` changed, `docker
+compose up -d` exits 0, but conductor 0.3.0 restarts in a loop and its
+log ends with `/run/credentials/conductor/audit-key: no such file or
+directory`. The database is not harmed: conductor exits during its
+start, before it serves requests or writes an audit row. Check out
+`v0.3.0` (step 1 of Upgrades) and run `docker compose up -d` again.
+
+Right after the upgrade, `docker compose exec conductor conductor audit
+verify` exits 1 with "audit chain not keyed yet": the chain is keyed from
+the first audited event, such as a sign-in. Run it again after that event.
 
 ## Podman, rootless and SELinux
 
@@ -525,6 +582,8 @@ Docker's `userns-remap` is fine: it maps every container the same way.
 | `permission denied` on a socket between containers, AVC denials | the containers do not share one MCS level (`SC_MCS_LEVEL`) |
 | a service refuses a peer on its socket | the containers run under different user namespace mappings |
 | `docker compose up -d` stops because a `-check` service did not complete successfully; conductor, idp, sync or conductor-backup stays in the created state | that service's setup one-shot has not run: `docker compose logs <check>` names the command (see Setup checks) |
+| conductor restarts in a loop, its log ending with `/run/credentials/conductor/audit-key: no such file or directory` | conductor 0.3.0 or later with the compose files of an earlier release: check out the release tag and run `docker compose up -d` (see Upgrading to 0.3.0) |
+| `sc-dc-init account` cannot read `/run/secrets/<name>` | the DC was started before the add-on was in `COMPOSE_FILE`: run `docker compose up -d dc` first (see Add-ons) |
 | the DC refuses to start | read the first log line: a different `SC_REALM` or `SC_HOSTNAME` than the volume's domain, an unfinished first boot (`SC_RETRY_FIRST_BOOT=1` starts it over), an unknown `SC_*` variable or a secret in the environment |
 
 `docker compose exec dc sc-dc-init health` prints the DC's checks and
